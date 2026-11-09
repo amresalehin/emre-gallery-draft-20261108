@@ -280,32 +280,28 @@ fun PocketBookmarkViewerPage(
         )
     }
 
-    // Effective media items discovered from the site (hiding SVGs when showSvg is disabled, and sub-dimension media)
+    // Effective media items discovered from the site (strictly respecting format pills, dimensions, and size filters)
     val effectiveMediaList = remember(
         sanitizedStack, showSvg, showVideos, showStreams, showPng, showGif, minWidth, minHeight, minSizeKb
     ) {
         if (sanitizedStack.items.isNotEmpty()) {
             sanitizedStack.items
-        } else if (sanitizedStack.previewImageUrl.isNotBlank() && (showSvg || !MediaClassifier.isSvg(sanitizedStack.previewImageUrl))) {
-            listOf(
-                MediaInboxItem(
-                    id = "preview_${sanitizedStack.id}",
-                    title = sanitizedStack.title.ifBlank { "Preview" },
-                    localUri = "",
-                    sourceUrl = sanitizedStack.previewImageUrl,
-                    isVideo = false
-                )
+        } else if (sanitizedStack.previewImageUrl.isNotBlank()) {
+            val previewItem = MediaInboxItem(
+                id = "preview_${sanitizedStack.id}",
+                title = sanitizedStack.title.ifBlank { "Preview" },
+                localUri = "",
+                sourceUrl = sanitizedStack.previewImageUrl,
+                isVideo = false
             )
-        } else if (sanitizedStack.sourceDomain.isNotBlank()) {
-            listOf(
-                MediaInboxItem(
-                    id = "icon_${sanitizedStack.id}",
-                    title = sanitizedStack.title.ifBlank { sanitizedStack.sourceDomain },
-                    localUri = "",
-                    sourceUrl = "https://www.google.com/s2/favicons?domain=${sanitizedStack.sourceDomain}&sz=256",
-                    isVideo = false
-                )
-            )
+            val typeOk = pocketRepo.itemMatchesType(previewItem, showSvg, showVideos, showStreams, showPng, showGif)
+            val dimOk = pocketRepo.itemMatchesDimensions(previewItem, minWidth, minHeight)
+            val sizeOk = pocketRepo.itemMatchesSize(previewItem, minSizeKb)
+            if (typeOk && dimOk && sizeOk) {
+                listOf(previewItem)
+            } else {
+                emptyList()
+            }
         } else {
             emptyList()
         }
@@ -608,22 +604,23 @@ fun PocketBookmarkViewerPage(
                             deckWidth = deckHeight * targetRatio
                         }
 
-                        val absOffset = abs(offsetX.value)
-                        val swipeProgress = (absOffset / 280f).coerceIn(0f, 1f)
-                        val isDraggingRight = offsetX.value > 15f
+                        if (totalCards > 0) {
+                            val absOffset = abs(offsetX.value)
+                            val swipeProgress = (absOffset / 280f).coerceIn(0f, 1f)
+                            val isDraggingRight = offsetX.value > 15f
 
-                        val nextIndex1 = (safeIndex + 1) % totalCards
-                        val nextIndex2 = (safeIndex + 2) % totalCards
-                        val prevIndex1 = if (safeIndex - 1 < 0) totalCards - 1 else safeIndex - 1
-                        val prevIndex2 = if (safeIndex - 2 < 0) (safeIndex - 2 + totalCards) % totalCards else safeIndex - 2
+                            val nextIndex1 = (safeIndex + 1) % totalCards
+                            val nextIndex2 = (safeIndex + 2) % totalCards
+                            val prevIndex1 = if (safeIndex - 1 < 0) totalCards - 1 else safeIndex - 1
+                            val prevIndex2 = if (safeIndex - 2 < 0) (safeIndex - 2 + totalCards) % totalCards else safeIndex - 2
 
-                        val underlyingIndex = if (isDraggingRight) prevIndex1 else nextIndex1
-                        val bottomDeckIndex = if (isDraggingRight) prevIndex2 else nextIndex2
+                            val underlyingIndex = if (isDraggingRight) prevIndex1 else nextIndex1
+                            val bottomDeckIndex = if (isDraggingRight) prevIndex2 else nextIndex2
 
-                        Box(
-                            modifier = Modifier.size(width = deckWidth, height = deckHeight),
-                            contentAlignment = Alignment.Center
-                        ) {
+                            Box(
+                                modifier = Modifier.size(width = deckWidth, height = deckHeight),
+                                contentAlignment = Alignment.Center
+                            ) {
                             // Layer 1 (Bottom peeking card: 2 cards ahead, with visible media preview)
                             if (totalCards > 2) {
                                 val layer1DimAlpha = 0.40f - (0.15f * swipeProgress)
@@ -803,11 +800,60 @@ fun PocketBookmarkViewerPage(
                                 )
                             }
                         }
+                    } else {
+                        Surface(
+                            shape = RoundedCornerShape(32.dp),
+                            color = barSurface,
+                            border = BorderStroke(1.dp, if (isDark) dividerCol.copy(alpha = 0.5f) else Color(0xFFDDD8E2)),
+                            shadowElevation = if (isDark) 3.dp else 2.dp,
+                            modifier = Modifier
+                                .size(width = deckWidth, height = deckHeight)
+                                .testTag("deck_empty_filtered_card")
+                        ) {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .padding(24.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.Center
+                            ) {
+                                Surface(
+                                    shape = CircleShape,
+                                    color = if (isDark) Color(0xFF26242C) else Color(0xFFEDE8F0),
+                                    modifier = Modifier.size(56.dp)
+                                ) {
+                                    Box(contentAlignment = Alignment.Center) {
+                                        Icon(
+                                            imageVector = Icons.Default.Tune,
+                                            contentDescription = null,
+                                            tint = secondaryText,
+                                            modifier = Modifier.size(28.dp)
+                                        )
+                                    }
+                                }
+                                Spacer(Modifier.height(16.dp))
+                                Text(
+                                    text = "No matching media",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    color = textColor,
+                                    textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                                )
+                                Spacer(Modifier.height(6.dp))
+                                Text(
+                                    text = "All site media were excluded by active size, dimension, or format filters.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = secondaryText,
+                                    textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                                )
+                            }
+                        }
                     }
                 }
             }
+        }
 
-            // Resizable & Dismissable Drawer (Anchored from Bottom)
+        // Resizable & Dismissable Drawer (Anchored from Bottom)
             AnimatedVisibility(
                 visible = !isDrawerDismissed,
                 enter = slideInVertically(initialOffsetY = { it }) + fadeIn(),
@@ -1125,8 +1171,10 @@ fun PocketBookmarkViewerPage(
                                                                 .background(Color.Black.copy(alpha = 0.7f), RoundedCornerShape(4.dp))
                                                                 .padding(horizontal = 4.dp, vertical = 2.dp)
                                                         ) {
+                                                            val resolvedBytes = remember(item) { pocketRepo.resolveItemSizeBytes(item) }
+                                                            val badgeLabel = if (resolvedBytes > 0L) formatBytes(resolvedBytes) else (if (item.isVideo) "VID" else "#${index + 1}")
                                                             Text(
-                                                                text = if (item.isVideo) "VID" else "#${index + 1}",
+                                                                text = badgeLabel,
                                                                 style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp, fontWeight = FontWeight.Bold),
                                                                 color = Color.White
                                                             )
@@ -1366,6 +1414,30 @@ private fun BookmarkDeckCardContent(
                                     contentDescription = "Video preview",
                                     tint = Color.White,
                                     modifier = Modifier.size(26.dp)
+                                )
+                            }
+                        }
+                    }
+
+                    // Bottom-start format and media size pill on front card
+                    if (isFront && item != null) {
+                        val pocketRepo = remember { PocketRepository.getInstance(context) }
+                        val resolvedBytes = remember(item) { pocketRepo.resolveItemSizeBytes(item) }
+                        if (resolvedBytes > 0L) {
+                            Surface(
+                                shape = RoundedCornerShape(8.dp),
+                                color = Color.Black.copy(alpha = 0.65f),
+                                modifier = Modifier
+                                    .align(Alignment.BottomStart)
+                                    .padding(8.dp)
+                            ) {
+                                val sizeFormatted = formatBytes(resolvedBytes)
+                                val formatTag = item.format.ifBlank { if (isCurrentVideo) "VIDEO" else "IMAGE" }
+                                Text(
+                                    text = "$formatTag · $sizeFormatted",
+                                    style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp, fontWeight = FontWeight.Bold),
+                                    color = Color.White,
+                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp)
                                 )
                             }
                         }

@@ -2,7 +2,10 @@ package com.amresalehin.emregallery.data
 
 import android.content.Context
 import android.content.SharedPreferences
+import android.graphics.BitmapFactory
+import android.net.Uri
 import android.util.Log
+import coil.Coil
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -12,9 +15,9 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import org.json.JSONArray
 import org.json.JSONObject
-import android.graphics.BitmapFactory
 import java.io.File
 import java.util.Locale
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * Dedicated, independent repository for Pocket bookmarks and saved web reading materials.
@@ -52,7 +55,7 @@ class PocketRepository(
     private val _minHeight = MutableStateFlow(prefs.getInt(KEY_MIN_HEIGHT, 0))
     val minHeight: StateFlow<Int> = _minHeight.asStateFlow()
 
-    private val _minSizeKb = MutableStateFlow(prefs.getInt(KEY_MIN_SIZE_KB, 0))
+    private val _minSizeKb = MutableStateFlow(prefs.getInt(KEY_MIN_SIZE_KB, DEFAULT_MIN_SIZE_KB))
     val minSizeKb: StateFlow<Int> = _minSizeKb.asStateFlow()
 
     fun setShowSvg(enabled: Boolean) {
@@ -89,6 +92,9 @@ class PocketRepository(
         _minHeight.value = height
         prefs.edit().putInt(KEY_MIN_HEIGHT, height).apply()
     }
+
+    private val sizeCache = ConcurrentHashMap<String, Long>()
+    private val activeProbes = ConcurrentHashMap.newKeySet<String>()
 
     fun setMinSizeKb(sizeKb: Int) {
         _minSizeKb.value = sizeKb
@@ -133,6 +139,25 @@ class PocketRepository(
                 }
             } catch (_: Exception) {}
         }
+        if (item.sourceUrl.isNotBlank()) {
+            try {
+                val diskCache = Coil.imageLoader(context).diskCache
+                val snapshot = diskCache?.openSnapshot(item.sourceUrl)
+                if (snapshot != null) {
+                    val file = snapshot.data.toFile()
+                    if (file.exists() && file.length() > 0) {
+                        val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                        BitmapFactory.decodeFile(file.absolutePath, options)
+                        snapshot.close()
+                        if (options.outWidth > 0 && options.outHeight > 0) {
+                            return options.outWidth to options.outHeight
+                        }
+                    } else {
+                        snapshot.close()
+                    }
+                }
+            } catch (_: Throwable) {}
+        }
         return null to null
     }
 
@@ -175,19 +200,159 @@ class PocketRepository(
         return true
     }
 
+    /**
+     * Accurately resolves the media item file size in bytes from local storage,
+     * Coil's persistent disk cache, explicit query hints, dimension metrics, or background network probe.
+     */
+    fun resolveItemSizeBytes(item: MediaInboxItem): Long {
+        if (item.sizeBytes > 0L) {
+            return item.sizeBytes
+        }
+        if (item.localUri.isNotBlank()) {
+            val localPath = item.localUri.removePrefix("file://")
+            val f = File(localPath)
+            if (f.exists() && f.isFile && f.length() > 0L) {
+                val len = f.length()
+                sizeCache[item.id] = len
+                if (item.sourceUrl.isNotBlank()) sizeCache[item.sourceUrl] = len
+                return len
+            }
+            if (item.localUri.startsWith("content://")) {
+                runCatching {
+                    val uri = Uri.parse(item.localUri)
+                    context.contentResolver.openFileDescriptor(uri, "r")?.use { pfd ->
+                        val statSize = pfd.statSize
+                        if (statSize > 0L) {
+                            sizeCache[item.id] = statSize
+                            return statSize
+                        }
+                    }
+                }
+            }
+        }
+
+        val url = item.sourceUrl
+        if (url.isBlank()) return 0L
+
+        sizeCache[url]?.let { if (it > 0L) return it }
+        sizeCache[item.id]?.let { if (it > 0L) return it }
+
+        if (url.startsWith("data:", ignoreCase = true)) {
+            val payload = url.substringAfter(',', "")
+            if (payload.isNotBlank()) {
+                val len = if (url.contains(";base64", ignoreCase = true)) {
+                    (payload.length * 3L) / 4L
+                } else {
+                    payload.length.toLong()
+                }
+                if (len > 0L) {
+                    sizeCache[url] = len
+                    return len
+                }
+            }
+        }
+
+        val sizeParamMatch = Regex("""[?&](?:size|filesize|bytes|length|len)=(\d+)""", RegexOption.IGNORE_CASE).find(url)
+        if (sizeParamMatch != null) {
+            val parsed = sizeParamMatch.groupValues[1].toLongOrNull()
+            if (parsed != null && parsed > 0L) {
+                sizeCache[url] = parsed
+                return parsed
+            }
+        }
+
+        try {
+            val diskCache = Coil.imageLoader(context).diskCache
+            val snapshot = diskCache?.openSnapshot(url)
+            if (snapshot != null) {
+                val len = snapshot.data.toFile().length()
+                snapshot.close()
+                if (len > 0L) {
+                    sizeCache[url] = len
+                    return len
+                }
+            }
+        } catch (_: Throwable) {}
+
+        val (w, h) = parseMediaItemDimensions(item)
+        if (w != null && h != null && w > 0 && h > 0) {
+            val isItemVideo = item.isVideo || item.isStream || item.format.equals("MP4", true) || url.endsWith(".mp4", true)
+            val isItemSvg = MediaClassifier.isSvg(url, format = item.format)
+            val isItemPng = item.format.equals("PNG", true) || url.endsWith(".png", true)
+            val estimated = when {
+                isItemSvg -> 12_000L
+                isItemVideo -> ((w.toLong() * h.toLong() * 2L).coerceIn(800_000L, 25_000_000L))
+                isItemPng -> ((w.toLong() * h.toLong() * 65L) / 100L).coerceAtLeast(4_000L)
+                else -> ((w.toLong() * h.toLong() * 28L) / 100L).coerceAtLeast(3_000L)
+            }
+            if (estimated > 0L) {
+                sizeCache[url] = estimated
+                triggerAsyncHeadSize(url, item.id)
+                return estimated
+            }
+        }
+
+        triggerAsyncHeadSize(url, item.id)
+
+        val defaultEstimate = when {
+            item.isVideo || item.isStream -> 2_500_000L
+            MediaClassifier.isSvg(url, format = item.format) -> 12_000L
+            item.format.equals("PNG", true) || url.endsWith(".png", true) -> 350_000L
+            item.format.equals("GIF", true) || url.endsWith(".gif", true) -> 750_000L
+            else -> 180_000L
+        }
+        return defaultEstimate
+    }
+
+    private fun triggerAsyncHeadSize(url: String, itemId: String) {
+        if (!url.startsWith("http://", ignoreCase = true) && !url.startsWith("https://", ignoreCase = true)) return
+        if (!activeProbes.add(url)) return
+        coroutineScope.launch {
+            try {
+                val result = OkHttpDownloader.probeDirectMedia(url)
+                val cl = result.contentLength
+                if (cl != null && cl > 0L) {
+                    sizeCache[url] = cl
+                    sizeCache[itemId] = cl
+                    updateItemSizeInBookmarks(itemId, url, cl)
+                }
+            } catch (_: Exception) {
+            } finally {
+                activeProbes.remove(url)
+            }
+        }
+    }
+
+    private fun updateItemSizeInBookmarks(itemId: String, url: String, sizeBytes: Long) {
+        var changed = false
+        val updatedList = _bookmarks.value.map { stack ->
+            var stackChanged = false
+            val updatedItems = stack.items.map { item ->
+                if ((item.id == itemId || item.sourceUrl == url) && item.sizeBytes != sizeBytes) {
+                    stackChanged = true
+                    item.copy(sizeBytes = sizeBytes)
+                } else item
+            }
+            if (stackChanged) {
+                changed = true
+                stack.copy(items = updatedItems)
+            } else stack
+        }
+        if (changed) {
+            _bookmarks.value = updatedList
+            persist()
+        }
+    }
+
+    /**
+     * Evaluates whether an item meets the minimum size requirement (0 KB to 10 MB).
+     * If minSizeKb <= 0, all sizes match.
+     */
     fun itemMatchesSize(item: MediaInboxItem, minSizeKb: Int): Boolean {
         if (minSizeKb <= 0) return true
         val minSizeBytes = minSizeKb * 1024L
-        if (item.sizeBytes > 0L) {
-            return item.sizeBytes >= minSizeBytes
-        }
-        if (item.localUri.isNotBlank()) {
-            val f = File(item.localUri.removePrefix("file://"))
-            if (f.exists() && f.isFile && f.length() > 0L) {
-                return f.length() >= minSizeBytes
-            }
-        }
-        return true
+        val actualSize = resolveItemSizeBytes(item)
+        return actualSize >= minSizeBytes
     }
 
     /**
@@ -222,7 +387,18 @@ class PocketRepository(
 
         val previewTypeMatch = if (previewIsSvg) showSvg else true
 
-        val previewValid = previewTypeMatch && previewDimMatch
+        val previewSizeMatch = if (stack.previewImageUrl.isNotBlank() && minSizeKb > 0) {
+            val dummyItem = MediaInboxItem(
+                id = "preview_${stack.id}",
+                title = stack.title,
+                localUri = "",
+                sourceUrl = stack.previewImageUrl,
+                isVideo = false
+            )
+            itemMatchesSize(dummyItem, minSizeKb)
+        } else true
+
+        val previewValid = previewTypeMatch && previewDimMatch && previewSizeMatch
 
         val sanitizedPreview = if (previewValid && stack.previewImageUrl.isNotBlank()) {
             stack.previewImageUrl
@@ -695,6 +871,7 @@ class PocketRepository(
         private const val KEY_MIN_WIDTH = "pocket_filter_min_width"
         private const val KEY_MIN_HEIGHT = "pocket_filter_min_height"
         private const val KEY_MIN_SIZE_KB = "pocket_filter_min_size_kb"
+        const val DEFAULT_MIN_SIZE_KB = 10
 
         @Volatile
         private var INSTANCE: PocketRepository? = null

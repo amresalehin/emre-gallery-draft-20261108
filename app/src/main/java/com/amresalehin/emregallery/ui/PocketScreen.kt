@@ -374,7 +374,9 @@ fun PocketScreen(
                                             searchQuery.trim().startsWith("http://") ||
                                             searchQuery.trim().startsWith("https://")
                                     )
-                            val hasActiveFilters = filterType != "All" || sortOrder != "Newest" || showSvg || minWidth > 0 || minHeight > 0
+                            val hasActiveFilters = filterType != "All" || sortOrder != "Newest" || showSvg ||
+                                    !showVideos || !showStreams || !showPng || !showGif ||
+                                    minWidth > 0 || minHeight > 0 || minSizeKb != PocketRepository.DEFAULT_MIN_SIZE_KB
 
                             PocketSearchPasteCapsule(
                                 query = searchQuery,

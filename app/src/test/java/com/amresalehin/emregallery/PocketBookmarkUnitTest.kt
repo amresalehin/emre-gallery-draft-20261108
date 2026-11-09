@@ -3,6 +3,7 @@ package com.amresalehin.emregallery
 import com.amresalehin.emregallery.data.MediaClassifier
 import com.amresalehin.emregallery.data.MediaInboxItem
 import com.amresalehin.emregallery.data.MediaInboxStack
+import com.amresalehin.emregallery.data.PocketRepository
 import com.amresalehin.emregallery.ui.Destination
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -565,6 +566,14 @@ class PocketBookmarkUnitTest {
             sourceUrl = "https://example.com/files",
             items = listOf(
                 MediaInboxItem(
+                    id = "icon",
+                    title = "icon.png",
+                    localUri = "",
+                    sourceUrl = "https://example.com/icon.png",
+                    isVideo = false,
+                    sizeBytes = 4 * 1024L // 4 KB (below default 10 KB)
+                ),
+                MediaInboxItem(
                     id = "tiny",
                     title = "tiny.jpg",
                     localUri = "",
@@ -596,22 +605,28 @@ class PocketBookmarkUnitTest {
             return items.filter { it.sizeBytes >= minBytes }
         }
 
-        // 1. Min size 0 KB: all items included
+        // 1. Min size 0 KB: all 4 items included
         val all = filterBySize(stack.items, 0)
-        assertEquals(3, all.size)
+        assertEquals(4, all.size)
 
-        // 2. Min size 100 KB: tiny.jpg excluded
+        // 2. Default Min size 10 KB: icon.png (4 KB) is excluded, 3 items remain
+        val default10Kb = filterBySize(stack.items, PocketRepository.DEFAULT_MIN_SIZE_KB)
+        assertEquals(10, PocketRepository.DEFAULT_MIN_SIZE_KB)
+        assertEquals(3, default10Kb.size)
+        assertFalse(default10Kb.any { it.id == "icon" })
+
+        // 3. Min size 100 KB: icon and tiny.jpg excluded
         val over100 = filterBySize(stack.items, 100)
         assertEquals(2, over100.size)
         assertEquals("medium.jpg", over100[0].title)
         assertEquals("large.mp4", over100[1].title)
 
-        // 3. Min size 1024 KB (1 MB): tiny and medium excluded, large included
+        // 4. Min size 1024 KB (1 MB): tiny and medium excluded, large included
         val over1Mb = filterBySize(stack.items, 1024)
         assertEquals(1, over1Mb.size)
         assertEquals("large.mp4", over1Mb[0].title)
 
-        // 4. Min size 10 MB (10240 KB): all items excluded from found media, but bookmark preserved
+        // 5. Min size 10 MB (10240 KB): all items excluded from found media, but bookmark preserved
         val over10Mb = filterBySize(stack.items, 10240)
         assertTrue(over10Mb.isEmpty())
         assertEquals("stack_size_test", stack.id)
@@ -683,6 +698,98 @@ class PocketBookmarkUnitTest {
         assertEquals("1920 px", formatDim(1920))
         assertEquals("4000+ px (∞)", formatDim(4000))
         assertEquals("4000+ px (∞)", formatDim(5000))
+    }
+
+    @Test
+    fun testMediaSizeFilterFunctionalWithDimensionEstimationAndFallback() {
+        val smallIcon = MediaInboxItem(
+            id = "icon",
+            title = "icon 32x32",
+            localUri = "",
+            sourceUrl = "https://example.com/icon.png?w=32&h=32",
+            isVideo = false,
+            format = "PNG"
+        )
+        val mediumPhoto = MediaInboxItem(
+            id = "photo",
+            title = "photo 800x600",
+            localUri = "",
+            sourceUrl = "https://example.com/photo.jpg?w=800&h=600",
+            isVideo = false,
+            format = "JPEG"
+        )
+        val highResPhoto = MediaInboxItem(
+            id = "wallpaper",
+            title = "wallpaper 1920x1080",
+            localUri = "",
+            sourceUrl = "https://example.com/wallpaper.jpg?w=1920&h=1080",
+            isVideo = false,
+            format = "JPEG"
+        )
+        val videoItem = MediaInboxItem(
+            id = "clip",
+            title = "clip 1920x1080",
+            localUri = "",
+            sourceUrl = "https://example.com/clip.mp4?w=1920&h=1080",
+            isVideo = true,
+            format = "MP4"
+        )
+
+        fun estimateBytes(item: MediaInboxItem): Long {
+            if (item.sizeBytes > 0L) return item.sizeBytes
+            val match = Regex("""(?i)[?&](?:w|width)=(\d+)[^&]*[?&](?:h|height)=(\d+)""").find(item.sourceUrl)
+            val w = match?.groupValues?.get(1)?.toIntOrNull() ?: 0
+            val h = match?.groupValues?.get(2)?.toIntOrNull() ?: 0
+            return when {
+                item.isVideo -> (w.toLong() * h.toLong() * 2L).coerceIn(800_000L, 25_000_000L)
+                item.format == "PNG" -> ((w.toLong() * h.toLong() * 65L) / 100L).coerceAtLeast(4_000L)
+                else -> ((w.toLong() * h.toLong() * 28L) / 100L).coerceAtLeast(3_000L)
+            }
+        }
+
+        val iconSize = estimateBytes(smallIcon)
+        val photoSize = estimateBytes(mediumPhoto)
+        val highResSize = estimateBytes(highResPhoto)
+        val videoSize = estimateBytes(videoItem)
+
+        // 1. Icon is ~4 KB
+        assertTrue("Icon size must be < 50 KB", iconSize < 50 * 1024L)
+
+        // 2. 800x600 photo is ~134 KB
+        assertTrue("800x600 photo should be between 100KB and 200KB", photoSize in (100 * 1024L)..(200 * 1024L))
+
+        // 3. 1920x1080 photo is ~580 KB
+        assertTrue("1920x1080 photo should be between 500KB and 700KB", highResSize in (500 * 1024L)..(700 * 1024L))
+
+        // 4. Video is > 1.5 MB
+        assertTrue("1080p video should be >= 1.5MB", videoSize >= (1500 * 1024L))
+
+        // Filter tests:
+        val items = listOf(smallIcon, mediumPhoto, highResPhoto, videoItem)
+        fun filterItems(minSizeKb: Int): List<MediaInboxItem> {
+            if (minSizeKb <= 0) return items
+            val minBytes = minSizeKb * 1024L
+            return items.filter { estimateBytes(it) >= minBytes }
+        }
+
+        // At 0 KB: all 4 items match
+        assertEquals(4, filterItems(0).size)
+
+        // At 100 KB: icon is excluded (3 items match)
+        val filter100 = filterItems(100)
+        assertEquals(3, filter100.size)
+        assertFalse(filter100.any { it.id == "icon" })
+
+        // At 500 KB: icon and mediumPhoto excluded (2 items match)
+        val filter500 = filterItems(500)
+        assertEquals(2, filter500.size)
+        assertTrue(filter500.any { it.id == "wallpaper" })
+        assertTrue(filter500.any { it.id == "clip" })
+
+        // At 1000 KB (1 MB): only video matches (1 item match)
+        val filter1Mb = filterItems(1000)
+        assertEquals(1, filter1Mb.size)
+        assertEquals("clip", filter1Mb[0].id)
     }
 }
 
