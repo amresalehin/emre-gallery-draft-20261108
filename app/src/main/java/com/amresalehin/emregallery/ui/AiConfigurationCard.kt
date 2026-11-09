@@ -30,6 +30,9 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
+import com.amresalehin.emregallery.ai.tagging.AiTaggingSettings
 import com.amresalehin.emregallery.data.CloudAiProvider
 import com.amresalehin.emregallery.data.CloudProviderStatus
 import com.amresalehin.emregallery.data.FlorenceModelManager
@@ -247,11 +250,58 @@ fun AiConfigurationCard(
                         Column(
                             verticalArrangement = Arrangement.spacedBy(10.dp)
                         ) {
+                            // Quick Presets
+                            Text(
+                                text = "Quick Presets",
+                                style = MaterialTheme.typography.labelSmall.copy(
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            )
+
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .horizontalScroll(rememberScrollState()),
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                val presets = listOf(
+                                    Triple("Google Gemini", "https://generativelanguage.googleapis.com/v1beta/openai", "gemini-1.5-flash"),
+                                    Triple("OpenAI", "https://api.openai.com/v1", "gpt-4o-mini"),
+                                    Triple("Groq", "https://api.groq.com/openai/v1", "llama-3.2-11b-vision-preview"),
+                                    Triple("Ollama", "http://localhost:11434/v1", "llava"),
+                                    Triple("OpenRouter", "https://openrouter.ai/api/v1", "google/gemini-flash-1.5")
+                                )
+                                presets.forEach { (pName, pUrl, pModel) ->
+                                    Surface(
+                                        onClick = {
+                                            providerName = pName
+                                            baseUrl = pUrl
+                                            modelId = pModel
+                                        },
+                                        shape = RoundedCornerShape(12.dp),
+                                        color = if (isDark) MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f) else Color.White.copy(alpha = 0.8f),
+                                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f))
+                                    ) {
+                                        Text(
+                                            text = pName,
+                                            style = MaterialTheme.typography.labelSmall.copy(
+                                                fontSize = 11.5.sp,
+                                                fontWeight = FontWeight.Medium,
+                                                color = MaterialTheme.colorScheme.onSurface
+                                            ),
+                                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                                        )
+                                    }
+                                }
+                            }
+
                             // 1. Provider name input
                             MinimalAiInputField(
                                 value = providerName,
                                 onValueChange = { providerName = it },
-                                placeholder = "Provider name (e.g. OpenAI)",
+                                placeholder = "Provider name (e.g. Google Gemini, OpenAI)",
                                 icon = Icons.Outlined.Label,
                                 testTag = "ai_provider_name_input"
                             )
@@ -281,7 +331,7 @@ fun AiConfigurationCard(
                             MinimalAiInputField(
                                 value = modelId,
                                 onValueChange = { modelId = it },
-                                placeholder = "Model ID (e.g. gpt-4o)",
+                                placeholder = "Model ID (e.g. gemini-1.5-flash, gpt-4o)",
                                 icon = Icons.Outlined.Memory,
                                 testTag = "ai_model_id_input"
                             )
@@ -310,7 +360,8 @@ fun AiConfigurationCard(
 
                                     scope.launch {
                                         prefs.saveCloudProvider(newProvider)
-                                        onShowSnackbar?.invoke("Provider '$name' added")
+                                        AiTaggingSettings.setSelectedModel(context, newProvider.id)
+                                        onShowSnackbar?.invoke("Provider '$name' ($model) added and activated")
                                         providerName = ""
                                         baseUrl = ""
                                         apiKey = ""
@@ -392,7 +443,11 @@ fun AiConfigurationCard(
                                         modifier = Modifier
                                             .fillMaxWidth()
                                             .clickable {
-                                                scope.launch { prefs.setActiveCloudProvider(provider.id) }
+                                                scope.launch {
+                                                    prefs.setActiveCloudProvider(provider.id)
+                                                    AiTaggingSettings.setSelectedModel(context, provider.id)
+                                                    onShowSnackbar?.invoke("Active AI model: ${provider.name} (${provider.modelId})")
+                                                }
                                             }
                                     ) {
                                         Row(
@@ -410,7 +465,11 @@ fun AiConfigurationCard(
                                                 RadioButton(
                                                     selected = provider.isActive,
                                                     onClick = {
-                                                        scope.launch { prefs.setActiveCloudProvider(provider.id) }
+                                                        scope.launch {
+                                                            prefs.setActiveCloudProvider(provider.id)
+                                                            AiTaggingSettings.setSelectedModel(context, provider.id)
+                                                            onShowSnackbar?.invoke("Active AI model: ${provider.name} (${provider.modelId})")
+                                                        }
                                                     },
                                                     modifier = Modifier.size(20.dp)
                                                 )

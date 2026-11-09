@@ -5,7 +5,7 @@ import com.amresalehin.emregallery.face.FaceRecognitionSettings
 
 /**
  * Persistent preferences for AI image tagging:
- * - Active model selection (e.g. Florence-2, Smart Vision, Gemma 4, etc.)
+ * - Active model selection (Florence-2, Gemma 4, LFM2.5-VL, Qwen3.5, or Cloud models)
  * - Folder scoping (all folders or selective folder filtering)
  */
 object AiTaggingSettings {
@@ -14,7 +14,6 @@ object AiTaggingSettings {
     const val KEY_ALL_FOLDERS = "all_folders"
     const val KEY_SELECTED_FOLDERS = "selected_folders"
 
-    const val MODEL_SMART_VISION = "smart_vision"
     const val MODEL_FLORENCE_2 = "florence2"
     const val MODEL_GEMMA_4 = "gemma_4_e2b"
     const val MODEL_LFM_2_5 = "lfm2_5_vl_450m_extract"
@@ -25,7 +24,9 @@ object AiTaggingSettings {
         context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
 
     fun getSelectedModel(context: Context): String {
-        return preferences(context).getString(KEY_SELECTED_MODEL, MODEL_FLORENCE_2) ?: MODEL_FLORENCE_2
+        val saved = preferences(context).getString(KEY_SELECTED_MODEL, null)
+        if (saved != null && saved != "smart_vision") return saved
+        return MODEL_FLORENCE_2
     }
 
     fun setSelectedModel(context: Context, modelId: String) {

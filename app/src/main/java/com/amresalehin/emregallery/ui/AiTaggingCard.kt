@@ -72,6 +72,7 @@ fun AiTaggingCard(
         }
     }
 
+    val cloudProviders by prefs.cloudProviders.collectAsState(initial = emptyList())
     val activeCloudProvider by prefs.activeCloudProvider.collectAsState(initial = null)
     val allModelStates by FlorenceModelManager.allModelStates.collectAsState()
 
@@ -93,32 +94,48 @@ fun AiTaggingCard(
         FlorenceModelManager.refreshAllStates(context)
     }
 
-    // List of available models
-    val availableModels = remember(activeCloudProvider) {
+    // If legacy smart_vision was selected, migrate to Florence-2
+    if (selectedModelId == "smart_vision") {
+        selectedModelId = AiTaggingSettings.MODEL_FLORENCE_2
+        AiTaggingSettings.setSelectedModel(context, AiTaggingSettings.MODEL_FLORENCE_2)
+    }
+
+    // List of available models (The 4 downloaded on-device models + Cloud models)
+    val availableModels = remember(activeCloudProvider, cloudProviders) {
         val models = mutableListOf(
-            TaggingModelOption(AiTaggingSettings.MODEL_SMART_VISION, "Smart Vision", isLocalAiModel = false),
             TaggingModelOption(AiTaggingSettings.MODEL_FLORENCE_2, "Florence-2", isLocalAiModel = true),
             TaggingModelOption(AiTaggingSettings.MODEL_GEMMA_4, "Gemma 4", isLocalAiModel = true),
             TaggingModelOption(AiTaggingSettings.MODEL_LFM_2_5, "LFM2.5-VL", isLocalAiModel = true),
             TaggingModelOption(AiTaggingSettings.MODEL_QWEN_3_5, "Qwen3.5", isLocalAiModel = true)
         )
-        if (activeCloudProvider != null && activeCloudProvider?.baseUrl?.isNotBlank() == true) {
-            models.add(TaggingModelOption(AiTaggingSettings.MODEL_CLOUD, activeCloudProvider?.name ?: "Cloud AI", isLocalAiModel = false))
+        cloudProviders.forEach { provider ->
+            val label = if (provider.modelId.isNotBlank()) {
+                "${provider.name} (${provider.modelId})"
+            } else {
+                provider.name
+            }
+            models.add(TaggingModelOption(provider.id, label, isLocalAiModel = false))
+        }
+        if (cloudProviders.isEmpty() && activeCloudProvider != null && activeCloudProvider?.baseUrl?.isNotBlank() == true) {
+            val p = activeCloudProvider!!
+            val label = if (p.modelId.isNotBlank()) "${p.name} (${p.modelId})" else p.name
+            models.add(TaggingModelOption(AiTaggingSettings.MODEL_CLOUD, label, isLocalAiModel = false))
         }
         models
     }
 
     // Selected model state inspection
-    val isSmartVision = selectedModelId == AiTaggingSettings.MODEL_SMART_VISION
-    val isCloud = selectedModelId == AiTaggingSettings.MODEL_CLOUD
+    val isCloud = selectedModelId == AiTaggingSettings.MODEL_CLOUD ||
+            selectedModelId.startsWith("cloud") ||
+            cloudProviders.any { it.id == selectedModelId }
     val currentModelState = allModelStates[selectedModelId] ?: FlorenceModelManager.getModelState(selectedModelId)
 
     val isModelInstalled = when {
-        isSmartVision || isCloud -> true
+        isCloud -> true
         else -> FlorenceModelManager.isInstalled(context, selectedModelId) || currentModelState.status.isUsable
     }
 
-    val isModelDownloading = !isSmartVision && !isCloud && currentModelState.status == FlorenceStatus.DOWNLOADING
+    val isModelDownloading = !isCloud && currentModelState.status == FlorenceStatus.DOWNLOADING
     val modelDownloadPercent = (currentModelState.progress * 100f).roundToInt().coerceIn(0, 100)
 
     val isRunning = taggingState.isRunning && !taggingState.isPaused
@@ -459,6 +476,10 @@ fun AiTaggingCard(
                                 onClick = {
                                     selectedModelId = model.id
                                     AiTaggingSettings.setSelectedModel(context, model.id)
+                                    val matchingCloud = cloudProviders.firstOrNull { it.id == model.id }
+                                    if (matchingCloud != null) {
+                                        scope.launch { prefs.setActiveCloudProvider(matchingCloud.id) }
+                                    }
                                 },
                                 testTag = "tagging_model_pill_${model.id}"
                             )

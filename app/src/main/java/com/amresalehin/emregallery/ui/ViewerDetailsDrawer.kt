@@ -419,6 +419,7 @@ fun ViewerDetailsDrawer(
     val handleAutoTagAi: () -> Unit = {
         if (!isAiTagging && !item.isVideo) {
             isAiTagging = true
+            val currentModel = com.amresalehin.emregallery.ai.tagging.AiTaggingSettings.getSelectedModel(context)
             aiTaggingStatus = "Analyzing photo..."
             coroutineScope.launch {
                 try {
@@ -426,16 +427,17 @@ fun ViewerDetailsDrawer(
                         com.amresalehin.emregallery.ai.tagging.AiImageTagger.tagAndSave(
                             context = context,
                             item = item,
-                            prefs = com.amresalehin.emregallery.data.PreferencesRepository(context)
+                            prefs = com.amresalehin.emregallery.data.PreferencesRepository(context),
+                            preferredModel = currentModel
                         )
                     }
                     if (result.isSuccess && result.tags.isNotEmpty()) {
                         result.tags.forEach { tag -> onAddTag(tag) }
                         aiTaggingStatus = "Tagged ${result.tags.size} items (${result.engineName})"
                     } else if (result.isSuccess) {
-                        aiTaggingStatus = "No tags identified"
+                        aiTaggingStatus = "No tags identified (${result.engineName})"
                     } else {
-                        aiTaggingStatus = result.errorMessage ?: "Failed to generate tags"
+                        aiTaggingStatus = result.errorMessage ?: "Failed to generate tags (${result.engineName})"
                     }
                 } catch (e: Exception) {
                     aiTaggingStatus = "Error: ${e.message}"

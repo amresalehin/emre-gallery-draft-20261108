@@ -168,7 +168,7 @@ fun SettingsScreen(
         "tagging".contains(query, ignoreCase = true) ||
         "ai tagging".contains(query, ignoreCase = true) ||
         "labels".contains(query, ignoreCase = true) ||
-        "smart vision".contains(query, ignoreCase = true)
+        "florence".contains(query, ignoreCase = true)
 
     val matchesGeoTimeline = query.isBlank() ||
         "geo timeline".contains(query, ignoreCase = true) ||

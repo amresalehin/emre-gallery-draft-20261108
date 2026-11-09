@@ -152,45 +152,150 @@ class AiImageTaggerTest {
     }
 
     @Test
-    fun testSmartVisionHeuristicsOnScreenshot() {
+    fun testFlorenceAndQwenLocalModelTaxonomy() {
         val item = MediaItem(
             id = 101L,
             uri = "content://media/external/images/media/101",
-            name = "Screenshot_20261108_120000.png",
-            mimeType = "image/png",
-            dateAddedSeconds = 1700000000L,
-            dateTakenMillis = 1700000000000L,
-            sizeBytes = 2048000L,
-            width = 1080,
-            height = 2400,
-            relativePath = "Pictures/Screenshots/",
-            isVideo = false
-        )
-
-        val tags = AiImageTagger.analyzeImageWithSmartVision(null, item)
-        assertTrue("Should tag as screenshot", tags.contains("screenshot"))
-        assertTrue("Should tag as portrait orientation", tags.contains("portrait"))
-    }
-
-    @Test
-    fun testSmartVisionHeuristicsOnPanoramicLandscape() {
-        val item = MediaItem(
-            id = 102L,
-            uri = "content://media/external/images/media/102",
-            name = "PANO_20261108.jpg",
+            name = "Landscape_Photo.jpg",
             mimeType = "image/jpeg",
             dateAddedSeconds = 1700000000L,
             dateTakenMillis = 1700000000000L,
-            sizeBytes = 4048000L,
-            width = 4000,
-            height = 1200,
+            sizeBytes = 2048000L,
+            width = 1920,
+            height = 1080,
             relativePath = "DCIM/Camera/",
             isVideo = false
         )
 
-        val tags = AiImageTagger.analyzeImageWithSmartVision(null, item)
-        assertTrue("Should tag as panoramic", tags.contains("panoramic"))
-        assertTrue("Should tag as landscape", tags.contains("landscape"))
-        assertTrue("Should tag as camera", tags.contains("camera"))
+        val florenceTags = AiImageTagger.tagWithLocalModelSpec(
+            null,
+            item,
+            com.amresalehin.emregallery.ai.local.LocalModelRegistry.FLORENCE_2_SPEC
+        )
+        assertTrue("Florence tags should contain florence2", florenceTags.contains("florence2"))
+        assertTrue("Florence tags should contain vision-language", florenceTags.contains("vision-language"))
+
+        val qwenTags = AiImageTagger.tagWithLocalModelSpec(
+            null,
+            item,
+            com.amresalehin.emregallery.ai.local.LocalModelRegistry.QWEN3_5_SPEC
+        )
+        assertTrue("Qwen tags should contain vision-qa", qwenTags.contains("vision-qa"))
+        assertTrue("Qwen tags should contain multimodal", qwenTags.contains("multimodal"))
+    }
+
+    @Test
+    fun testCloudVisionRespectsExplicitModelOverride() = runBlocking {
+        val jsonReply = """
+            {
+              "choices": [
+                {
+                  "message": {
+                    "content": "sunset, beach, waves"
+                  }
+                }
+              ]
+            }
+        """.trimIndent()
+
+        mockWebServer.enqueue(
+            MockResponse()
+                .setResponseCode(200)
+                .setHeader("Content-Type", "application/json")
+                .setBody(jsonReply)
+        )
+
+        val baseUrl = mockWebServer.url("/v1/").toString()
+        val provider = CloudAiProvider(
+            id = "test_provider",
+            name = "OpenAI",
+            baseUrl = baseUrl,
+            apiKey = "secret",
+            modelId = "gpt-4o-mini",
+            status = CloudProviderStatus.CONNECTED
+        )
+
+        val sampleJpeg = ByteArray(50) { 0x33 }
+        AiImageTagger.tagWithCloudVisionDirect(provider, sampleJpeg, modelOverride = "gpt-4o")
+
+        val recordedRequest = mockWebServer.takeRequest()
+        val bodyString = recordedRequest.body.readUtf8()
+        val jsonBody = org.json.JSONObject(bodyString)
+
+        assertEquals("Request payload must use the explicit model override", "gpt-4o", jsonBody.getString("model"))
+    }
+
+    @Test
+    fun testCloudVisionExtractsFromGeminiCandidatesResponse() = runBlocking {
+        val geminiReply = """
+            {
+              "candidates": [
+                {
+                  "content": {
+                    "parts": [
+                      {
+                        "text": "lake, mountains, reflection, wilderness, alpine"
+                      }
+                    ]
+                  }
+                }
+              ]
+            }
+        """.trimIndent()
+
+        mockWebServer.enqueue(
+            MockResponse()
+                .setResponseCode(200)
+                .setHeader("Content-Type", "application/json")
+                .setBody(geminiReply)
+        )
+
+        val baseUrl = mockWebServer.url("/v1/").toString()
+        val provider = CloudAiProvider(
+            id = "gemini_provider",
+            name = "Google Gemini",
+            baseUrl = baseUrl,
+            apiKey = "gemini_key",
+            modelId = "gemini-1.5-flash",
+            status = CloudProviderStatus.CONNECTED
+        )
+
+        val sampleJpeg = ByteArray(50) { 0x44 }
+        val tags = AiImageTagger.tagWithCloudVisionDirect(provider, sampleJpeg)
+
+        assertTrue("Tags should contain lake", tags.contains("lake"))
+        assertTrue("Tags should contain mountains", tags.contains("mountains"))
+        assertTrue("Tags should contain alpine", tags.contains("alpine"))
+    }
+
+    @Test
+    fun testLocalModelTaxonomyGeneration() {
+        val item = MediaItem(
+            id = 201L,
+            uri = "content://media/external/images/media/201",
+            name = "Nature_Photo.jpg",
+            mimeType = "image/jpeg",
+            dateAddedSeconds = 1700000000L,
+            dateTakenMillis = 1700000000000L,
+            sizeBytes = 1000000L,
+            width = 1920,
+            height = 1080,
+            relativePath = "DCIM/Camera/",
+            isVideo = false
+        )
+
+        val gemmaTags = AiImageTagger.tagWithLocalModelSpec(
+            null,
+            item,
+            com.amresalehin.emregallery.ai.local.LocalModelRegistry.GEMMA_4_SPEC
+        )
+        assertTrue("Gemma tags should contain multimodal taxonomy", gemmaTags.contains("multimodal"))
+
+        val lfmTags = AiImageTagger.tagWithLocalModelSpec(
+            null,
+            item,
+            com.amresalehin.emregallery.ai.local.LocalModelRegistry.LFM2_5_SPEC
+        )
+        assertTrue("LFM tags should contain extract taxonomy", lfmTags.contains("extract"))
     }
 }

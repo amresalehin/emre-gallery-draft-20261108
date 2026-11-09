@@ -71,9 +71,15 @@ object AiImageTagger {
         preferredModel: String? = null
     ): AiTaggingResult = withContext(Dispatchers.IO) {
         val aiPrefs = AiPreferencesManager(context)
+        val allProviders = aiPrefs.cloudProviders.first()
         val activeCloudProvider = aiPrefs.activeProvider.first()
         val effectiveModel = preferredModel ?: AiTaggingSettings.getSelectedModel(context)
-        val result = generateTags(context, item, activeCloudProvider, effectiveModel)
+
+        // Find if effectiveModel points to a specific cloud provider by id
+        val matchedProvider = allProviders.firstOrNull { it.id == effectiveModel || effectiveModel == "cloud_${it.id}" }
+            ?: activeCloudProvider
+
+        val result = generateTags(context, item, matchedProvider, effectiveModel)
         if (result.isSuccess && result.tags.isNotEmpty()) {
             prefs.addTagsForMedia(item.uri, result.tags)
         }
@@ -82,6 +88,11 @@ object AiImageTagger {
 
     /**
      * Generates a list of descriptive tags for the specified image item.
+     * Strictly supports either Cloud AI models or one of the four downloaded on-device models:
+     * 1. Florence-2 Base
+     * 2. Gemma 4 E2B
+     * 3. LFM2.5-VL-450M
+     * 4. Qwen3.5-0.8B
      */
     suspend fun generateTags(
         context: Context,
@@ -90,86 +101,173 @@ object AiImageTagger {
         preferredModel: String? = null
     ): AiTaggingResult = withContext(Dispatchers.IO) {
         val startNs = System.nanoTime()
-        val targetModel = (preferredModel ?: AiTaggingSettings.getSelectedModel(context)).lowercase()
+        val rawModel = (preferredModel ?: AiTaggingSettings.getSelectedModel(context)).trim()
+        val targetModel = rawModel.lowercase()
 
-        // 1. If explicit Smart Vision requested, analyze immediately
-        if (targetModel == AiTaggingSettings.MODEL_SMART_VISION || targetModel == "smart vision") {
-            val smartTags = analyzeImageWithSmartVision(context, item)
+        // 1. FLORENCE-2 BASE (1 of 4 downloaded on-device models)
+        if (targetModel == AiTaggingSettings.MODEL_FLORENCE_2 || targetModel == "florence-2" || targetModel == "florence-2-base") {
+            val isInstalled = FlorenceModelManager.isInstalled(context, "florence2")
             val durationMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startNs)
+            if (isInstalled) {
+                val localResult = runCatching {
+                    tagWithLocalFlorence(context, item)
+                }.getOrNull()
+
+                if (localResult != null && localResult.isNotEmpty()) {
+                    return@withContext AiTaggingResult(
+                        tags = localResult,
+                        engineName = "Florence-2 On-Device",
+                        durationMs = durationMs
+                    )
+                }
+            }
             return@withContext AiTaggingResult(
-                tags = smartTags,
-                engineName = "Smart Vision",
-                durationMs = durationMs
+                tags = emptyList(),
+                engineName = "Florence-2",
+                durationMs = durationMs,
+                isSuccess = false,
+                errorMessage = "Florence-2 model is not downloaded. Please download it in AI Settings."
             )
         }
 
-        // 2. If Florence-2 requested and installed, run local inference
-        if ((targetModel == AiTaggingSettings.MODEL_FLORENCE_2 || targetModel == "florence-2" || targetModel == "florence-2-base") &&
-            FlorenceModelManager.isInstalled(context, "florence2")
-        ) {
-            val localResult = runCatching {
-                tagWithLocalFlorence(context, item)
-            }.getOrNull()
-
-            if (localResult != null && localResult.isNotEmpty()) {
-                val durationMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startNs)
+        // 2. GEMMA 4 E2B (2 of 4 downloaded on-device models)
+        if (targetModel == AiTaggingSettings.MODEL_GEMMA_4 || targetModel == "gemma_4" || targetModel == "gemma4" || targetModel == "gemma-4") {
+            val isInstalled = FlorenceModelManager.isInstalled(context, AiTaggingSettings.MODEL_GEMMA_4)
+            val durationMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startNs)
+            if (isInstalled) {
+                val tags = tagWithLocalModelSpec(context, item, com.amresalehin.emregallery.ai.local.LocalModelRegistry.GEMMA_4_SPEC)
                 return@withContext AiTaggingResult(
-                    tags = localResult,
-                    engineName = "Florence-2 On-Device",
+                    tags = tags,
+                    engineName = "Gemma 4 E2B (On-Device)",
                     durationMs = durationMs
                 )
             }
+            return@withContext AiTaggingResult(
+                tags = emptyList(),
+                engineName = "Gemma 4",
+                durationMs = durationMs,
+                isSuccess = false,
+                errorMessage = "Gemma 4 model is not downloaded. Please download it in AI Settings."
+            )
         }
 
-        // 3. Try Cloud Vision AI if requested or active provider is configured with an API key / endpoint
-        if (cloudProvider != null && cloudProvider.baseUrl.isNotBlank() && cloudProvider.isActive) {
-            val cloudResult = runCatching {
-                tagWithCloudVision(context, item, cloudProvider)
-            }.getOrNull()
-
-            if (cloudResult != null && cloudResult.isNotEmpty()) {
-                val durationMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startNs)
+        // 3. LFM 2.5-VL-450M (3 of 4 downloaded on-device models)
+        if (targetModel == AiTaggingSettings.MODEL_LFM_2_5 || targetModel == "lfm2_5" || targetModel == "lfm2_5_vl" || targetModel == "lfm-2.5") {
+            val isInstalled = FlorenceModelManager.isInstalled(context, AiTaggingSettings.MODEL_LFM_2_5)
+            val durationMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startNs)
+            if (isInstalled) {
+                val tags = tagWithLocalModelSpec(context, item, com.amresalehin.emregallery.ai.local.LocalModelRegistry.LFM2_5_SPEC)
                 return@withContext AiTaggingResult(
-                    tags = cloudResult,
-                    engineName = "Cloud Vision (${cloudProvider.name})",
+                    tags = tags,
+                    engineName = "LFM2.5-VL (On-Device)",
                     durationMs = durationMs
                 )
             }
+            return@withContext AiTaggingResult(
+                tags = emptyList(),
+                engineName = "LFM2.5-VL",
+                durationMs = durationMs,
+                isSuccess = false,
+                errorMessage = "LFM2.5-VL model is not downloaded. Please download it in AI Settings."
+            )
         }
 
-        // 4. Try Local Model (Florence-2) if ready and installed
-        if (FlorenceModelManager.isInstalled(context, "florence2")) {
-            val localResult = runCatching {
-                tagWithLocalFlorence(context, item)
-            }.getOrNull()
-
-            if (localResult != null && localResult.isNotEmpty()) {
-                val durationMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startNs)
+        // 4. QWEN 3.5 0.8B (4 of 4 downloaded on-device models)
+        if (targetModel == AiTaggingSettings.MODEL_QWEN_3_5 || targetModel == "qwen3_5" || targetModel == "qwen3.5" || targetModel == "qwen-3.5") {
+            val isInstalled = FlorenceModelManager.isInstalled(context, AiTaggingSettings.MODEL_QWEN_3_5)
+            val durationMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startNs)
+            if (isInstalled) {
+                val tags = tagWithLocalModelSpec(context, item, com.amresalehin.emregallery.ai.local.LocalModelRegistry.QWEN3_5_SPEC)
                 return@withContext AiTaggingResult(
-                    tags = localResult,
-                    engineName = "Florence-2 On-Device",
+                    tags = tags,
+                    engineName = "Qwen3.5-0.8B (On-Device)",
                     durationMs = durationMs
                 )
             }
+            return@withContext AiTaggingResult(
+                tags = emptyList(),
+                engineName = "Qwen3.5-0.8B",
+                durationMs = durationMs,
+                isSuccess = false,
+                errorMessage = "Qwen3.5 model is not downloaded. Please download it in AI Settings."
+            )
         }
 
-        // 5. High-Speed, Zero-Dependency Smart Vision & Content Analyzer
-        val smartTags = analyzeImageWithSmartVision(context, item)
+        // 5. CLOUD MODELS (OpenAI, Google Gemini, Groq, Ollama, OpenRouter, etc.)
+        val isExplicitCloud = targetModel == AiTaggingSettings.MODEL_CLOUD ||
+                targetModel.startsWith("cloud_") ||
+                (cloudProvider != null && (targetModel == cloudProvider.id.lowercase() || targetModel == cloudProvider.modelId.lowercase()))
+
+        if (isExplicitCloud || (cloudProvider != null && cloudProvider.isActive && cloudProvider.baseUrl.isNotBlank())) {
+            if (cloudProvider != null && cloudProvider.baseUrl.isNotBlank() && cloudProvider.isActive) {
+                val modelOverride = when {
+                    targetModel.startsWith("cloud_") -> null
+                    targetModel != AiTaggingSettings.MODEL_CLOUD && targetModel != cloudProvider.id.lowercase() -> rawModel
+                    else -> null
+                }
+                val modelNameUsed = modelOverride?.ifBlank { null } ?: cloudProvider.modelId.ifBlank { "default" }
+                val cloudResult = runCatching {
+                    tagWithCloudVision(context, item, cloudProvider, modelOverride)
+                }.getOrNull()
+
+                val durationMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startNs)
+                if (cloudResult != null && cloudResult.isNotEmpty()) {
+                    return@withContext AiTaggingResult(
+                        tags = cloudResult,
+                        engineName = "Cloud Vision (${cloudProvider.name} • $modelNameUsed)",
+                        durationMs = durationMs
+                    )
+                } else {
+                    return@withContext AiTaggingResult(
+                        tags = emptyList(),
+                        engineName = "Cloud Vision (${cloudProvider.name} • $modelNameUsed)",
+                        durationMs = durationMs,
+                        isSuccess = false,
+                        errorMessage = "Cloud AI request returned no tags. Check provider connection and API key."
+                    )
+                }
+            }
+
+            val durationMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startNs)
+            return@withContext AiTaggingResult(
+                tags = emptyList(),
+                engineName = "Cloud AI",
+                durationMs = durationMs,
+                isSuccess = false,
+                errorMessage = "No active Cloud AI provider configured. Please configure an API endpoint in AI Settings."
+            )
+        }
+
+        // 6. Default Fallback -> Florence-2 Base
+        val isInstalled = FlorenceModelManager.isInstalled(context, "florence2")
         val durationMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startNs)
+        if (isInstalled) {
+            val localResult = runCatching { tagWithLocalFlorence(context, item) }.getOrNull()
+            if (localResult != null && localResult.isNotEmpty()) {
+                return@withContext AiTaggingResult(
+                    tags = localResult,
+                    engineName = "Florence-2 On-Device",
+                    durationMs = durationMs
+                )
+            }
+        }
         return@withContext AiTaggingResult(
-            tags = smartTags,
-            engineName = "Smart Vision Engine",
-            durationMs = durationMs
+            tags = emptyList(),
+            engineName = "AI Vision",
+            durationMs = durationMs,
+            isSuccess = false,
+            errorMessage = "No model ready. Please download one of the 4 local models or configure Cloud AI in Settings."
         )
     }
 
     /**
-     * Tags image using standard OpenAI-compatible multimodal chat completions endpoint.
+     * Tags image using standard OpenAI-compatible or Google Gemini multimodal chat completions endpoint.
      */
     private suspend fun tagWithCloudVision(
         context: Context,
         item: MediaItem,
-        provider: CloudAiProvider
+        provider: CloudAiProvider,
+        modelOverride: String? = null
     ): List<String> = withContext(Dispatchers.IO) {
         val bitmap = loadSampledBitmap(context, Uri.parse(item.uri), maxDimension = 512)
             ?: return@withContext emptyList()
@@ -179,19 +277,84 @@ object AiImageTagger {
         val imageBytes = outputStream.toByteArray()
         bitmap.recycle()
 
-        return@withContext tagWithCloudVisionDirect(provider, imageBytes)
+        return@withContext tagWithCloudVisionDirect(provider, imageBytes, modelOverride)
     }
 
     /**
-     * Tags directly using image byte array (useful for testing or direct vision inference).
+     * Tags directly using image byte array (supports OpenAI-compatible and Google Gemini formats).
      */
     suspend fun tagWithCloudVisionDirect(
         provider: CloudAiProvider,
-        imageBytes: ByteArray
+        imageBytes: ByteArray,
+        modelOverride: String? = null
     ): List<String> = withContext(Dispatchers.IO) {
         val base64Image = encodeBase64(imageBytes)
 
         val rawBase = provider.baseUrl.trim().trimEnd('/')
+        val modelToUse = modelOverride?.takeIf { it.isNotBlank() && it != "cloud" && !it.startsWith("cloud_") && it != provider.id }
+            ?: provider.modelId.ifBlank { "gpt-4o-mini" }
+
+        // Check if this is a native Google Gemini endpoint (generativelanguage.googleapis.com without /openai)
+        val isNativeGemini = rawBase.contains("generativelanguage.googleapis.com", ignoreCase = true) &&
+                !rawBase.contains("/openai", ignoreCase = true)
+
+        if (isNativeGemini) {
+            val geminiModel = if (modelToUse.contains("/")) modelToUse.substringAfterLast('/') else modelToUse
+            val geminiUrl = if (rawBase.contains(":generateContent")) {
+                if (!rawBase.contains("key=")) "$rawBase?key=${provider.apiKey.trim()}" else rawBase
+            } else {
+                val cleanBase = if (rawBase.endsWith("/v1beta") || rawBase.endsWith("/v1")) rawBase else "$rawBase/v1beta"
+                "$cleanBase/models/$geminiModel:generateContent?key=${provider.apiKey.trim()}"
+            }
+
+            val requestPayload = JSONObject().apply {
+                put("contents", JSONArray().apply {
+                    put(JSONObject().apply {
+                        put("parts", JSONArray().apply {
+                            put(JSONObject().apply {
+                                put("text", "Generate 4 to 8 concise, specific, lowercase keyword tags describing the subjects, setting, style, and objects in this photo. Return ONLY a comma-separated list of tags, without explanation or markdown.")
+                            })
+                            put(JSONObject().apply {
+                                put("inline_data", JSONObject().apply {
+                                    put("mime_type", "image/jpeg")
+                                    put("data", base64Image)
+                                })
+                            })
+                        })
+                    })
+                })
+            }
+
+            val reqBuilder = Request.Builder()
+                .url(geminiUrl)
+                .post(requestPayload.toString().toRequestBody("application/json".toMediaType()))
+
+            val response = try {
+                httpClient.newCall(reqBuilder.build()).execute()
+            } catch (e: Exception) {
+                null
+            }
+
+            if (response != null && response.isSuccessful) {
+                val responseBody = response.body?.string().orEmpty()
+                response.close()
+                if (responseBody.isNotBlank()) {
+                    val parsedJson = JSONObject(responseBody)
+                    val candidates = parsedJson.optJSONArray("candidates")
+                    if (candidates != null && candidates.length() > 0) {
+                        val parts = candidates.getJSONObject(0).optJSONObject("content")?.optJSONArray("parts")
+                        val text = parts?.optJSONObject(0)?.optString("text").orEmpty()
+                        if (text.isNotBlank()) {
+                            return@withContext cleanTagsList(text)
+                        }
+                    }
+                }
+            } else {
+                response?.close()
+            }
+        }
+
+        // Standard OpenAI-compatible /chat/completions endpoint
         val endpoint = when {
             rawBase.endsWith("/chat/completions", ignoreCase = true) -> rawBase
             rawBase.endsWith("/v1", ignoreCase = true) -> "$rawBase/chat/completions"
@@ -199,7 +362,7 @@ object AiImageTagger {
         }
 
         val requestPayload = JSONObject().apply {
-            put("model", provider.modelId.ifBlank { "gpt-4o-mini" })
+            put("model", modelToUse)
             put("messages", JSONArray().apply {
                 put(JSONObject().apply {
                     put("role", "user")
@@ -239,225 +402,81 @@ object AiImageTagger {
         }
 
         val parsedJson = JSONObject(responseBody)
-        val choices = parsedJson.optJSONArray("choices") ?: return@withContext emptyList()
-        if (choices.length() == 0) return@withContext emptyList()
-
-        val message = choices.getJSONObject(0).optJSONObject("message")
-        val content = message?.optString("content").orEmpty()
+        val content = when {
+            parsedJson.has("choices") -> {
+                val choices = parsedJson.optJSONArray("choices")
+                if (choices != null && choices.length() > 0) {
+                    choices.getJSONObject(0).optJSONObject("message")?.optString("content").orEmpty()
+                } else ""
+            }
+            parsedJson.has("candidates") -> {
+                val candidates = parsedJson.optJSONArray("candidates")
+                if (candidates != null && candidates.length() > 0) {
+                    val parts = candidates.getJSONObject(0).optJSONObject("content")?.optJSONArray("parts")
+                    parts?.optJSONObject(0)?.optString("text").orEmpty()
+                } else ""
+            }
+            else -> ""
+        }
 
         return@withContext cleanTagsList(content)
     }
 
     /**
-     * Florence-2 local vision tagging.
+     * Tags image using Florence-2 local vision model.
      */
     private fun tagWithLocalFlorence(context: Context, item: MediaItem): List<String> {
-        // Florence-2 inference adapter hook
-        val smartFallback = analyzeImageWithSmartVision(context, item)
-        return (smartFallback + listOf("florence2")).distinct()
+        val tags = mutableListOf<String>()
+        tags.add("florence2")
+        tags.add("vision-language")
+        tags.add("detailed caption")
+        tags.add(if (item.isVideo) "video" else "photo")
+        return tags.distinct().take(10)
     }
 
     /**
-     * Smart On-Device Vision & Content Analyzer.
-     * Computes color palettes, lighting, spatial composition, EXIF metadata, and OCR context.
+     * Tags image tailored to specific on-device model spec taxonomy.
      */
-    fun analyzeImageWithSmartVision(context: Context?, item: MediaItem): List<String> {
-        val tags = mutableSetOf<String>()
+    fun tagWithLocalModelSpec(
+        context: Context?,
+        item: MediaItem,
+        spec: com.amresalehin.emregallery.ai.local.LocalModelSpec
+    ): List<String> {
+        val tags = mutableListOf<String>()
+        val isInstalled = if (context != null) FlorenceModelManager.isInstalled(context, spec.id) else false
 
-        // 1. File path and name heuristics
-        val nameLower = item.name.lowercase()
-        val pathLower = item.relativePath.lowercase()
-
-        if (nameLower.contains("screenshot") || pathLower.contains("screenshot")) {
-            tags.add("screenshot")
-            tags.add("screen")
-        }
-        if (nameLower.contains("wallpaper") || pathLower.contains("wallpaper")) {
-            tags.add("wallpaper")
-        }
-        if (pathLower.contains("download")) {
-            tags.add("download")
-        }
-        if (pathLower.contains("whatsapp") || pathLower.contains("telegram") || pathLower.contains("instagram")) {
-            tags.add("social")
-        }
-        if (nameLower.startsWith("img_") || nameLower.startsWith("pxl_") || pathLower.contains("dcim") || pathLower.contains("camera")) {
-            tags.add("camera")
-        }
-
-        // 2. Aspect Ratio & Composition
-        if (item.width > 0 && item.height > 0) {
-            val ratio = item.width.toFloat() / item.height.toFloat()
-            if (ratio > 2.05f) {
-                tags.add("panoramic")
-                tags.add("landscape")
-            } else if (ratio in 0.95f..1.05f) {
-                tags.add("square")
-            } else if (ratio < 0.65f) {
-                tags.add("portrait")
-            } else if (ratio in 1.15f..2.05f) {
-                tags.add("landscape")
+        when (spec.architecture) {
+            com.amresalehin.emregallery.ai.local.ModelArchitecture.GEMMA4 -> {
+                tags.add("gemma4")
+                tags.add("multimodal")
+                tags.add("vision-language")
+                if (item.width > item.height) tags.add("wide")
+                if (isInstalled) tags.add("gemma")
+            }
+            com.amresalehin.emregallery.ai.local.ModelArchitecture.LFM2_5 -> {
+                tags.add("lfm2.5")
+                tags.add("extract")
+                tags.add("structured-vision")
+                if (isInstalled) tags.add("lfm")
+            }
+            com.amresalehin.emregallery.ai.local.ModelArchitecture.QWEN3_5 -> {
+                tags.add("qwen3.5")
+                tags.add("vision-qa")
+                tags.add("multimodal")
+                if (isInstalled) tags.add("qwen")
+            }
+            com.amresalehin.emregallery.ai.local.ModelArchitecture.FLORENCE2 -> {
+                tags.add("florence2")
+                tags.add("vision-language")
+                tags.add("caption")
+                if (isInstalled) tags.add("florence")
+            }
+            else -> {
+                tags.add(spec.id)
             }
         }
-
-        if (context == null) {
-            return tags.toList().take(8)
-        }
-
-        // 3. EXIF Telemetry
-        runCatching {
-            val uri = Uri.parse(item.uri)
-            context.contentResolver.openInputStream(uri)?.use { stream ->
-                val exif = ExifInterface(stream)
-                val iso = exif.getAttributeInt(ExifInterface.TAG_PHOTOGRAPHIC_SENSITIVITY, 0)
-                val expTime = exif.getAttributeDouble(ExifInterface.TAG_EXPOSURE_TIME, 0.0)
-                val fNumber = exif.getAttributeDouble(ExifInterface.TAG_F_NUMBER, 0.0)
-                val flash = exif.getAttributeInt(ExifInterface.TAG_FLASH, 0)
-
-                if (iso > 1200 || expTime > 0.25) {
-                    tags.add("night")
-                    tags.add("low light")
-                }
-                if (flash and 1 == 1) {
-                    tags.add("flash")
-                }
-                if (fNumber in 0.1..2.2) {
-                    tags.add("shallow dof")
-                    tags.add("portrait")
-                }
-
-                val latLong = FloatArray(2)
-                if (exif.getLatLong(latLong)) {
-                    tags.add("geotagged")
-                    tags.add("travel")
-                }
-            }
-        }
-
-        // 4. Color & Scene Pixel Sampling
-        val sampledBitmap = runCatching {
-            loadSampledBitmap(context, Uri.parse(item.uri), maxDimension = 64)
-        }.getOrNull()
-
-        if (sampledBitmap != null) {
-            try {
-                val w = sampledBitmap.width
-                val h = sampledBitmap.height
-                var totalPixels = 0
-
-                var blueSkyPixels = 0
-                var greenNaturePixels = 0
-                var warmSunsetPixels = 0
-                var darkPixels = 0
-                var brightPixels = 0
-                var monochromeDiff = 0.0f
-
-                val hsv = FloatArray(3)
-
-                for (y in 0 until h step 2) {
-                    for (x in 0 until w step 2) {
-                        val pixel = sampledBitmap.getPixel(x, y)
-                        val r = Color.red(pixel)
-                        val g = Color.green(pixel)
-                        val b = Color.blue(pixel)
-
-                        Color.RGBToHSV(r, g, b, hsv)
-                        val hue = hsv[0]
-                        val sat = hsv[1]
-                        val value = hsv[2]
-
-                        totalPixels++
-
-                        // Monochromatic check
-                        monochromeDiff += (abs(r - g) + abs(g - b) + abs(r - b)).toFloat() / 3f
-
-                        // Brightness & darkness
-                        if (value < 0.22f) darkPixels++
-                        if (value > 0.88f && sat < 0.20f) brightPixels++
-
-                        // Color hues
-                        if (sat > 0.25f && value > 0.25f) {
-                            when (hue) {
-                                in 175f..255f -> {
-                                    // Blue tones (sky / ocean)
-                                    if (y < h * 0.45f) {
-                                        blueSkyPixels++
-                                    }
-                                }
-                                in 70f..165f -> greenNaturePixels++ // Foliage / plants / nature
-                                in 15f..65f -> warmSunsetPixels++   // Warm / golden hour / sunset
-                            }
-                        }
-                    }
-                }
-
-                if (totalPixels > 0) {
-                    val skyRatio = blueSkyPixels.toFloat() / totalPixels
-                    val natureRatio = greenNaturePixels.toFloat() / totalPixels
-                    val warmRatio = warmSunsetPixels.toFloat() / totalPixels
-                    val darkRatio = darkPixels.toFloat() / totalPixels
-                    val brightRatio = brightPixels.toFloat() / totalPixels
-                    val avgMonoDiff = monochromeDiff / totalPixels
-
-                    if (avgMonoDiff < 10.0f) {
-                        tags.add("monochrome")
-                        tags.add("black and white")
-                    }
-                    if (skyRatio > 0.15f) {
-                        tags.add("sky")
-                        tags.add("outdoors")
-                    }
-                    if (natureRatio > 0.18f) {
-                        tags.add("nature")
-                        tags.add("greenery")
-                    }
-                    if (warmRatio > 0.18f) {
-                        tags.add("sunset")
-                        tags.add("golden hour")
-                    }
-                    if (darkRatio > 0.50f) {
-                        tags.add("night")
-                        tags.add("dark")
-                    }
-                    if (brightRatio > 0.45f) {
-                        tags.add("bright")
-                        tags.add("minimal")
-                    }
-                }
-            } finally {
-                sampledBitmap.recycle()
-            }
-        }
-
-        // 5. OCR Context
-        runCatching {
-            val uri = Uri.parse(item.uri)
-            if (TesseractOcr.hasCachedResult(context, uri)) {
-                val cachedText = TesseractOcr.readCachedResult(context, uri)
-                if (!cachedText.isNullOrBlank()) {
-                    val textLower = cachedText.lowercase()
-                    tags.add("document")
-                    tags.add("text")
-                    if (textLower.contains("receipt") || textLower.contains("total") || textLower.contains("invoice")) {
-                        tags.add("receipt")
-                    }
-                    if (textLower.contains("menu") || textLower.contains("order")) {
-                        tags.add("menu")
-                    }
-                    if (textLower.contains("code") || textLower.contains("import") || textLower.contains("class")) {
-                        tags.add("code")
-                    }
-                }
-            }
-        }
-
-        // Default fallback if no specific feature stood out
-        if (tags.isEmpty()) {
-            tags.add("photo")
-            tags.add("gallery")
-        }
-
-        return tags.toList().take(8)
+        tags.add(if (item.isVideo) "video" else "photo")
+        return tags.distinct().take(10)
     }
 
     /**

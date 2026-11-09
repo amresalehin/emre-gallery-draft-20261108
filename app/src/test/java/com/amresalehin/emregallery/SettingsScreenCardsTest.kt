@@ -79,14 +79,14 @@ class SettingsScreenCardsTest {
                 "tagging".contains(query, ignoreCase = true) ||
                 "ai tagging".contains(query, ignoreCase = true) ||
                 "labels".contains(query, ignoreCase = true) ||
-                "smart vision".contains(query, ignoreCase = true) ||
+                "florence".contains(query, ignoreCase = true) ||
                 "keywords".contains(query, ignoreCase = true)
         }
 
         assertTrue(matchesTagging(""))
         assertTrue(matchesTagging("tag"))
         assertTrue(matchesTagging("tagging"))
-        assertTrue(matchesTagging("smart vision"))
+        assertTrue(matchesTagging("florence"))
         assertFalse(matchesTagging("theme"))
     }
 
