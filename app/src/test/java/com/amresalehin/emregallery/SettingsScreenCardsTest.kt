@@ -142,21 +142,85 @@ class SettingsScreenCardsTest {
                 .sortedWith(String.CASE_INSENSITIVE_ORDER)
                 .toList()
             list.addAll(names)
-            list.add("+ Pick")
             return list
         }
 
         val extracted = extractFolders(mediaFolders)
-        // Must contain All, all 8 distinct folders, and + Pick (total 10 items)
-        assertEquals(10, extracted.size)
+        // Must contain All and all 8 distinct folders without pick pill (total 9 items)
+        assertEquals(9, extracted.size)
         assertTrue(extracted.contains("All"))
-        assertTrue(extracted.contains("+ Pick"))
+        assertFalse(extracted.contains("+ Pick"))
         assertTrue(extracted.contains("Wallpapers"))
         assertTrue(extracted.contains("Instagram"))
         assertTrue(extracted.contains("Vacation"))
         assertTrue(extracted.contains("Family"))
         assertTrue(extracted.contains("Camera"))
         assertTrue(extracted.contains("Screenshots"))
+    }
+
+    @Test
+    fun testGeoTimelineFolderNamesDoNotIncludeFullPaths() {
+        val paths = listOf(
+            "DCIM/Camera",
+            "Pictures/Screenshots",
+            "Android/media/com.whatsapp/WhatsApp/Media/WhatsApp Images",
+            "Download/Telegram/Subfolder"
+        )
+        val finalNames = paths.map { it.trim('/').substringAfterLast('/') }
+        assertEquals(listOf("Camera", "Screenshots", "WhatsApp Images", "Subfolder"), finalNames)
+        for (name in finalNames) {
+            assertFalse("Folder display name '$name' must not contain path separators", name.contains('/'))
+        }
+    }
+
+    @Test
+    fun testGeoTimelineMultiSelectPillsTapToSelectAndUnselect() {
+        var isAllFolders = true
+        var selectedFolders = setOf<String>()
+        val allAvailableFolders = listOf("DCIM/Camera", "Pictures/Screenshots", "Download")
+
+        fun onToggleFolder(folderPath: String) {
+            if (isAllFolders) {
+                isAllFolders = false
+                selectedFolders = setOf(folderPath)
+            } else {
+                val next = if (folderPath in selectedFolders) {
+                    selectedFolders - folderPath
+                } else {
+                    selectedFolders + folderPath
+                }
+                if (next.isEmpty() || next.size >= allAvailableFolders.size) {
+                    isAllFolders = true
+                    selectedFolders = emptySet()
+                } else {
+                    selectedFolders = next
+                }
+            }
+        }
+
+        // Initially All
+        assertTrue(isAllFolders)
+        assertTrue(selectedFolders.isEmpty())
+
+        // Tap Camera -> selected
+        onToggleFolder("DCIM/Camera")
+        assertFalse(isAllFolders)
+        assertEquals(setOf("DCIM/Camera"), selectedFolders)
+
+        // Tap Screenshots -> multiple selection allowed
+        onToggleFolder("Pictures/Screenshots")
+        assertFalse(isAllFolders)
+        assertEquals(setOf("DCIM/Camera", "Pictures/Screenshots"), selectedFolders)
+
+        // Tap Camera again -> unselects Camera
+        onToggleFolder("DCIM/Camera")
+        assertFalse(isAllFolders)
+        assertEquals(setOf("Pictures/Screenshots"), selectedFolders)
+
+        // Tap Screenshots again -> becomes empty, reverts to All Folders
+        onToggleFolder("Pictures/Screenshots")
+        assertTrue(isAllFolders)
+        assertTrue(selectedFolders.isEmpty())
     }
 }
 

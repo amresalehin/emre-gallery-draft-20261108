@@ -369,6 +369,7 @@ fun SettingsScreen(
                         media = media,
                         cardBackground = cardBackground,
                         cardBorder = cardBorder,
+                        availableFolders = availableFolders,
                         initiallyExpanded = query.isNotBlank() && matchesGeoTimeline,
                         onShowSnackbar = onShowSnackbar
                     )
