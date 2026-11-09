@@ -247,11 +247,12 @@ object TimelineGeotagEngine {
         val before = if (insertionPoint > 0) sortedPoints[insertionPoint - 1] else null
         val after = if (insertionPoint < sortedPoints.size) sortedPoints[insertionPoint] else null
 
-        // Try linear interpolation between surrounding points if within allowed gap
+        // Try linear interpolation between surrounding points if within allowed gap and distance
         if (config.interpolateBetweenPoints && before != null && after != null) {
             val gapMillis = after.timestampMillis - before.timestampMillis
             val maxGapMillis = config.maxInterpolationGapSeconds * 1000L
-            if (gapMillis in 1..maxGapMillis) {
+            val distanceMeters = haversineDistanceMeters(before.latitude, before.longitude, after.latitude, after.longitude)
+            if (gapMillis in 1..maxGapMillis && distanceMeters <= config.maxInterpolationDistanceMeters) {
                 val fraction = (adjustedPhotoTime - before.timestampMillis).toDouble() / gapMillis.toDouble()
                 val interpLat = before.latitude + fraction * (after.latitude - before.latitude)
                 val interpLng = before.longitude + fraction * (after.longitude - before.longitude)

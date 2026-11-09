@@ -25,12 +25,28 @@ class GeotagPreferencesManager(private val context: Context) {
 
     private val writeToExifKey = booleanPreferencesKey("geotag_write_to_exif")
     private val maxInterpolationGapKey = intPreferencesKey("geotag_max_interpolation_gap_minutes")
+    private val maxInterpolationDistanceKmKey = androidx.datastore.preferences.core.floatPreferencesKey("geotag_max_interpolation_distance_km")
     private val nearestPointToleranceKey = intPreferencesKey("geotag_nearest_point_tolerance_minutes")
     private val skipExistingGpsKey = booleanPreferencesKey("geotag_skip_existing_gps")
     private val isAllFoldersKey = booleanPreferencesKey("geotag_is_all_folders")
     private val selectedFoldersKey = stringSetPreferencesKey("geotag_selected_folders")
 
     private val sharedPrefs = context.getSharedPreferences("geotag_prefs", Context.MODE_PRIVATE)
+
+    fun getMaxInterpolationDistanceKmSync(): Float =
+        sharedPrefs.getFloat("max_distance_km", 2.0f)
+
+    val maxInterpolationDistanceKm: Flow<Float> = context.galleryDataStore.data.map {
+        it[maxInterpolationDistanceKmKey] ?: getMaxInterpolationDistanceKmSync()
+    }.distinctUntilChanged()
+
+    suspend fun setMaxInterpolationDistanceKm(distanceKm: Float) {
+        val clamped = distanceKm.coerceIn(0.5f, 5.0f)
+        sharedPrefs.edit().putFloat("max_distance_km", clamped).apply()
+        context.galleryDataStore.edit { prefs ->
+            prefs[maxInterpolationDistanceKmKey] = clamped
+        }
+    }
 
     fun isWriteToExifSync(): Boolean =
         sharedPrefs.getBoolean("write_to_exif", false)

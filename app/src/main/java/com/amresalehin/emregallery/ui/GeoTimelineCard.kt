@@ -27,6 +27,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
@@ -81,15 +82,22 @@ fun GeoTimelineCard(
 
     val geotagPrefs = remember { com.amresalehin.emregallery.data.preferences.GeotagPreferencesManager(context) }
     val prefMaxGapMinutes by geotagPrefs.maxInterpolationGapMinutes.collectAsState(initial = geotagPrefs.getMaxInterpolationGapMinutesSync())
+    val prefMaxDistanceKm by geotagPrefs.maxInterpolationDistanceKm.collectAsState(initial = geotagPrefs.getMaxInterpolationDistanceKmSync())
     val prefSelectedFolders by geotagPrefs.selectedFolders.collectAsState(initial = geotagPrefs.getSelectedFoldersSync())
 
     val writeToExif = false
     var maxInterpolationGapMinutes by remember(prefMaxGapMinutes) { mutableIntStateOf(prefMaxGapMinutes) }
+    var maxInterpolationDistanceKm by remember(prefMaxDistanceKm) { mutableFloatStateOf(prefMaxDistanceKm) }
 
-    // Persistent storage for timeline JSON file
-    val savedTimelineFile = remember { File(context.filesDir, "saved_timeline.json") }
+    // Ensure any previously saved timeline file is cleaned up per specification
+    LaunchedEffect(Unit) {
+        runCatching {
+            File(context.filesDir, "saved_timeline.json").takeIf { it.exists() }?.delete()
+            geotagPrefs.setSavedTimelineFileName(null)
+        }
+    }
 
-    // Timeline data state
+    // Timeline data state (kept in memory only for current session)
     var timelineFileName by remember { mutableStateOf<String?>(null) }
     var timelinePoints by remember { mutableStateOf<List<TimelineLocationPoint>>(emptyList()) }
     var segmentedTimeline by remember { mutableStateOf<SegmentedTimeline?>(null) }
@@ -109,29 +117,6 @@ fun GeoTimelineCard(
     var skippedCount by remember { mutableIntStateOf(0) }
     var geotagJob by remember { mutableStateOf<Job?>(null) }
     val runLogs = remember { mutableStateListOf<String>() }
-
-    // Auto-restore saved timeline JSON on first launch
-    LaunchedEffect(Unit) {
-        if (timelinePoints.isEmpty() && savedTimelineFile.exists() && savedTimelineFile.length() > 0) {
-            isParsingJson = true
-            val savedName = geotagPrefs.getSavedTimelineFileName() ?: "Timeline.json"
-            scope.launch(Dispatchers.IO) {
-                val parsed = runCatching {
-                    savedTimelineFile.inputStream().use { stream ->
-                        GoogleTimelineParser.parseSegmentedTimeline(stream)
-                    }
-                }.getOrNull()
-                val points = parsed?.rawPoints ?: emptyList()
-                withContext(Dispatchers.Main) {
-                    timelineFileName = savedName
-                    segmentedTimeline = parsed
-                    timelinePoints = points
-                    isParsingJson = false
-                    statusSummary = if (points.isNotEmpty()) "${points.size} points" else "0 points"
-                }
-            }
-        }
-    }
 
     // Resolved folders list: displays ONLY final folder names, matching Face card
     val resolvedFolders = remember(media, availableFolders) {
@@ -168,7 +153,7 @@ fun GeoTimelineCard(
 
     val isAllSelected = resolvedFolders.isNotEmpty() && resolvedFolders.all { it.path in selectedFolders || it.name in selectedFolders }
 
-    // JSON file picker - saves the uploaded JSON to app internal storage for future sessions
+    // JSON file picker - parsed in-memory for the current session (not saved to disk)
     val jsonPicker = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument()
     ) { uri: Uri? ->
@@ -177,24 +162,9 @@ fun GeoTimelineCard(
             statusSummary = null
             scope.launch(Dispatchers.IO) {
                 val name = queryDisplayName(context.contentResolver, uri) ?: "Timeline.json"
-                runCatching {
-                    context.contentResolver.openInputStream(uri)?.use { input ->
-                        savedTimelineFile.outputStream().use { output ->
-                            input.copyTo(output)
-                        }
-                    }
-                    geotagPrefs.setSavedTimelineFileName(name)
-                }
-
                 val parsed = runCatching {
-                    if (savedTimelineFile.exists() && savedTimelineFile.length() > 0) {
-                        savedTimelineFile.inputStream().use { stream ->
-                            GoogleTimelineParser.parseSegmentedTimeline(stream)
-                        }
-                    } else {
-                        context.contentResolver.openInputStream(uri)?.use { stream ->
-                            GoogleTimelineParser.parseSegmentedTimeline(stream)
-                        }
+                    context.contentResolver.openInputStream(uri)?.use { stream ->
+                        GoogleTimelineParser.parseSegmentedTimeline(stream)
                     }
                 }.getOrNull()
 
@@ -231,9 +201,22 @@ fun GeoTimelineCard(
         currentLiveItem = null
         runLogs.clear()
 
-        val startTimeStr = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date())
-        runLogs.add("=== Geo Timeline Batch Run Started at $startTimeStr ===")
-        runLogs.add("Write to EXIF: $writeToExif | Max Gap: ${maxInterpolationGapMinutes}m | Scope: ${if (isAllSelected) "All Folders" else selectedFolders.joinToString()}")
+        val startTimeMillis = System.currentTimeMillis()
+        val startTimeStr = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date(startTimeMillis))
+        runLogs.add("==================================================")
+        runLogs.add("   GEO TIMELINE BATCH PROCESSING LOG")
+        runLogs.add("==================================================")
+        runLogs.add("• Started At: $startTimeStr")
+        runLogs.add("• Timeline File: ${timelineFileName ?: "Uploaded Timeline"}")
+        runLogs.add("• Timeline Signals: ${timelinePoints.size} location points")
+        segmentedTimeline?.let { seg ->
+            runLogs.add("• Hierarchy: ${seg.activitySegments.size} activity paths, ${seg.visits.size} place visits")
+        }
+        runLogs.add("• Interpolation Filter 1 (Time): $maxInterpolationGapMinutes min max gap")
+        runLogs.add("• Interpolation Filter 2 (Distance): ${String.format(Locale.US, "%.1f km", maxInterpolationDistanceKm)} max distance")
+        runLogs.add("• Nearest Tolerance: ${geotagPrefs.getNearestPointToleranceMinutesSync()} min")
+        runLogs.add("• Scope: ${if (isAllSelected) "All Folders" else selectedFolders.joinToString(", ")}")
+        runLogs.add("--------------------------------------------------")
 
         geotagJob = scope.launch(Dispatchers.IO) {
             val filteredMedia = if (isAllSelected || selectedFolders.isEmpty() && resolvedFolders.isEmpty()) {
@@ -283,18 +266,26 @@ fun GeoTimelineCard(
                     runCompleted = true
                     statusSummary = "No photos"
                 }
+                runLogs.add("No candidate photos found in selected folders.")
                 return@launch
             }
+
+            runLogs.add("Target Candidates: $total non-video media items queued for processing.")
+            runLogs.add("--------------------------------------------------")
 
             val config = GeotagConfig(
                 skipAlreadyGeotagged = !forceRerunAll,
                 maxInterpolationGapSeconds = maxInterpolationGapMinutes * 60L,
+                maxInterpolationDistanceMeters = (maxInterpolationDistanceKm * 1000f).toDouble(),
                 maxTimeDeltaSeconds = geotagPrefs.getNearestPointToleranceMinutesSync() * 60L
             )
 
             var tagged = 0
             var skipped = 0
             var processed = 0
+            var interpolatedMatches = 0
+            var exactMatches = 0
+            var nearestMatches = 0
             val currentTimeline = segmentedTimeline
 
             for (candidate in candidates) {
@@ -363,6 +354,34 @@ fun GeoTimelineCard(
                     GeotagStatus.ERROR -> "Error reading EXIF"
                 }
 
+                val candidateLog = buildString {
+                    append("[$processed/$total] ${candidate.displayName} | Capture: $timestampStr\n")
+                    if (candidate.hasExistingGeotag && match.status == GeotagStatus.ALREADY_GEOTAGGED) {
+                        append("   • Existing GPS: ${formatCoordinates(candidate.existingLatitude ?: 0.0, candidate.existingLongitude ?: 0.0)}\n")
+                        append("   • Status: SKIPPED (already has GPS coordinates)")
+                    } else if (match.status == GeotagStatus.MATCHED && lat != null && lng != null) {
+                        append("   • Resolved GPS: $coordsStr\n")
+                        val method = match.matchMethod ?: (if (match.isInterpolated) "interpolated" else "nearest")
+                        append("   • Match Method: $method")
+                        match.sampleGapMinutes?.let { gap ->
+                            if (gap > 0.0) append(" | Temporal Gap: ${String.format(Locale.US, "%.1f", gap)}m")
+                        }
+                        match.timeDifferenceSeconds?.let { diff ->
+                            append(" | Delta: ${diff}s")
+                        }
+                        append("\n")
+                        if (!addressStr.isNullOrBlank()) {
+                            append("   • Address: $addressStr\n")
+                        }
+                        append("   • Status: GEOTAGGED (saved to map viewer)")
+                    } else if (match.status == GeotagStatus.NO_TIMESTAMP) {
+                        append("   • Status: SKIPPED (missing capture timestamp)")
+                    } else {
+                        append("   • Status: UNMATCHED (${match.errorMessage ?: "no timeline point within time/distance thresholds"})")
+                    }
+                }
+                runLogs.add(candidateLog)
+
                 if (match.status == GeotagStatus.ALREADY_GEOTAGGED) {
                     skipped++
                 } else if (match.status == GeotagStatus.MATCHED && match.matchedPoint != null) {
@@ -371,7 +390,12 @@ fun GeoTimelineCard(
                         result = match,
                         writeExif = writeToExif
                     ).getOrDefault(false)
-                    if (ok) tagged++
+                    if (ok) {
+                        tagged++
+                        if (match.isInterpolated) interpolatedMatches++
+                        else if (match.matchMethod == "exact") exactMatches++
+                        else nearestMatches++
+                    }
                 }
 
                 processed++
@@ -386,9 +410,6 @@ fun GeoTimelineCard(
                     isMatched = match.status == GeotagStatus.MATCHED
                 )
 
-                val logLine = "[$processed/$total] ${candidate.displayName} | Time: $timestampStr | GPS: $coordsStr | Addr: $addressStr | Status: $statusStr"
-                runLogs.add(logLine)
-
                 withContext(Dispatchers.Main) {
                     progressFraction = fraction
                     processedCount = processed
@@ -398,17 +419,22 @@ fun GeoTimelineCard(
                 }
             }
 
-            val endTimeStr = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date())
-            runLogs.add("=== Geo Timeline Batch Run Ended at $endTimeStr ===")
-            runLogs.add("Summary: $tagged tagged, $skipped skipped, $processed total processed.")
+            val endTimeMillis = System.currentTimeMillis()
+            val durationSec = (endTimeMillis - startTimeMillis) / 1000
+            val endTimeStr = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date(endTimeMillis))
+            runLogs.add("--------------------------------------------------")
+            runLogs.add("=== GEO TIMELINE BATCH RUN COMPLETED AT $endTimeStr ===")
+            runLogs.add("• Total Processed: $processed / $total (${durationSec}s)")
+            runLogs.add("• Successfully Geotagged: $tagged (Exact: $exactMatches, Interpolated: $interpolatedMatches, Nearest: $nearestMatches)")
+            runLogs.add("• Skipped (Already Tagged / No Time): $skipped")
+            runLogs.add("• Unmatched: ${total - tagged - skipped}")
+            runLogs.add("==================================================")
 
             withContext(Dispatchers.Main) {
                 isRunning = false
                 isPaused = false
                 runCompleted = true
                 statusSummary = "$tagged tagged · $skipped skipped"
-                val modeDesc = if (writeToExif) "written to EXIF & map" else "cached to in-app map (EXIF safe)"
-                onShowSnackbar?.invoke("Geo Timeline: $tagged photos $modeDesc, $skipped skipped")
             }
         }
     }
@@ -566,54 +592,34 @@ fun GeoTimelineCard(
                         .fillMaxWidth()
                         .padding(top = 14.dp)
                 ) {
-                    // 1. Folders Section: Matching Face Card layout & styling
+                    // 1. Folders Section: Clean "Folders" text header and compact checkbox only
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Icon(
-                                imageVector = Icons.Outlined.Folder,
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.onSurface,
-                                modifier = Modifier.size(20.dp)
+                        Text(
+                            text = "Folders",
+                            style = MaterialTheme.typography.bodyMedium.copy(
+                                fontSize = 13.5.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = MaterialTheme.colorScheme.onSurface
                             )
-                            Spacer(Modifier.width(8.dp))
-                            Text(
-                                text = "Folders",
-                                style = MaterialTheme.typography.bodyMedium.copy(
-                                    fontSize = 13.5.sp,
-                                    fontWeight = FontWeight.SemiBold,
-                                    color = MaterialTheme.colorScheme.onSurface
-                                )
-                            )
-                        }
+                        )
 
-                        // Select all checkbox
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
+                        // Checkbox only (a bit smaller, no text)
+                        Box(
+                            contentAlignment = Alignment.Center,
                             modifier = Modifier
-                                .clip(RoundedCornerShape(8.dp))
+                                .clip(RoundedCornerShape(6.dp))
                                 .clickable {
                                     val newSelected = if (isAllSelected) emptySet() else resolvedFolders.map { it.path }.toSet()
                                     selectedFolders = newSelected
                                     scope.launch { geotagPrefs.setSelectedFolders(newSelected) }
                                 }
-                                .padding(vertical = 4.dp, horizontal = 4.dp)
+                                .padding(2.dp)
                                 .testTag("geo_timeline_select_all_checkbox_row")
                         ) {
-                            Text(
-                                text = "Select all",
-                                style = MaterialTheme.typography.bodySmall.copy(
-                                    fontSize = 13.sp,
-                                    fontWeight = if (isAllSelected) FontWeight.SemiBold else FontWeight.Normal,
-                                    color = MaterialTheme.colorScheme.onSurface
-                                )
-                            )
-                            Spacer(Modifier.width(4.dp))
                             Checkbox(
                                 checked = isAllSelected,
                                 onCheckedChange = { checked ->
@@ -621,7 +627,10 @@ fun GeoTimelineCard(
                                     selectedFolders = newSelected
                                     scope.launch { geotagPrefs.setSelectedFolders(newSelected) }
                                 },
-                                modifier = Modifier.size(24.dp).testTag("geo_timeline_select_all_checkbox")
+                                modifier = Modifier
+                                    .scale(0.82f)
+                                    .size(20.dp)
+                                    .testTag("geo_timeline_select_all_checkbox")
                             )
                         }
                     }
@@ -702,24 +711,23 @@ fun GeoTimelineCard(
                         Spacer(Modifier.height(12.dp))
                     }
 
-                    // 3. Interpolation Max Gap Slider
+                    // 3. Two Interpolator Filters: 1. Time, 2. Distance (Minimal icon-only, no explanatory text)
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(bottom = 12.dp)
                     ) {
+                        // Interpolator Filter 1: Time
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Text(
-                                text = "Max Interpolation Gap",
-                                style = MaterialTheme.typography.bodyMedium.copy(
-                                    fontSize = 13.5.sp,
-                                    fontWeight = FontWeight.SemiBold
-                                ),
-                                color = MaterialTheme.colorScheme.onSurface
+                            Icon(
+                                imageVector = Icons.Outlined.AccessTime,
+                                contentDescription = "Time filter",
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(18.dp)
                             )
                             Text(
                                 text = "$maxInterpolationGapMinutes min",
@@ -741,6 +749,42 @@ fun GeoTimelineCard(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .testTag("interpolation_gap_slider")
+                        )
+
+                        Spacer(Modifier.height(6.dp))
+
+                        // Interpolator Filter 2: Distance (0.5 KM to 5 KM)
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                imageVector = Icons.Outlined.Straighten,
+                                contentDescription = "Distance filter",
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Text(
+                                text = String.format(Locale.US, "%.1f km", maxInterpolationDistanceKm),
+                                style = MaterialTheme.typography.labelMedium.copy(
+                                    fontWeight = FontWeight.SemiBold
+                                ),
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                        Slider(
+                            value = maxInterpolationDistanceKm,
+                            onValueChange = { newVal ->
+                                val rounded = (kotlin.math.round(newVal * 10f) / 10f).coerceIn(0.5f, 5.0f)
+                                maxInterpolationDistanceKm = rounded
+                                scope.launch { geotagPrefs.setMaxInterpolationDistanceKm(rounded) }
+                            },
+                            valueRange = 0.5f..5.0f,
+                            steps = 44,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("interpolation_distance_slider")
                         )
                     }
 
@@ -982,7 +1026,6 @@ fun GeoTimelineCard(
                                     geotagJob?.cancel()
                                     runCompleted = true
                                     statusSummary = "Cancelled ($processedCount/$totalCandidatesCount)"
-                                    onShowSnackbar?.invoke("Geotagging cancelled")
                                 },
                                 shape = RoundedCornerShape(14.dp),
                                 border = BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.5f)),
@@ -1076,8 +1119,7 @@ fun GeoTimelineCard(
                                     } else {
                                         "Geo Timeline: ${statusSummary ?: "No activity"}"
                                     }
-                                    val fileName = exportGeotagLogs(context, logText)
-                                    onShowSnackbar?.invoke("Logs downloaded: $fileName")
+                                    exportGeotagLogs(context, logText)
                                 },
                                 shape = RoundedCornerShape(14.dp),
                                 modifier = Modifier

@@ -11,6 +11,7 @@ data class MatchProvenance(
     val sampleBeforeTime: Long? = null,
     val sampleAfterTime: Long? = null,
     val sampleGapMinutes: Double? = null,
+    val sampleDistanceMeters: Double? = null,
     val isEstimated: Boolean = false,
     val timeDifferenceSeconds: Long = 0L
 )
@@ -26,12 +27,28 @@ data class InterpolationMatchResult(
 )
 
 /**
+ * Haversine formula to compute great-circle distance in meters between two coordinates.
+ */
+fun haversineDistanceMeters(lat1: Double, lon1: Double, lat2: Double, lon2: Double): Double {
+    val r = 6371000.0 // Earth radius in meters
+    val dLat = Math.toRadians(lat2 - lat1)
+    val dLon = Math.toRadians(lon2 - lon1)
+    val a = kotlin.math.sin(dLat / 2) * kotlin.math.sin(dLat / 2) +
+            kotlin.math.cos(Math.toRadians(lat1)) * kotlin.math.cos(Math.toRadians(lat2)) *
+            kotlin.math.sin(dLon / 2) * kotlin.math.sin(dLon / 2)
+    val c = 2 * kotlin.math.atan2(kotlin.math.sqrt(a), kotlin.math.sqrt(1 - a))
+    return r * c
+}
+
+/**
  * Service providing path interpolation and structured fallback matching.
  *
  * Fallback ladder:
  * 1. Segment Path Interpolation: Strictly bounded within identical activity segments.
- *    Enforces the threshold condition: (T2 - T1) <= T_max_gap. Prevents point linkage
- *    across activity transitions or visit boundaries.
+ *    Enforces the threshold conditions:
+ *    - Time: (T2 - T1) <= T_max_gap
+ *    - Distance: haversineDistance(P1, P2) <= D_max_distance
+ *    Prevents point linkage across activity transitions or excessively large distance gaps.
  * 2. Raw signals position nearest search (within nearest point tolerance).
  * 3. Visit staypoint match (stationary duration containment or nearest staypoint).
  */
@@ -82,6 +99,7 @@ object TimelinePathInterpolator {
                                 sampleBeforeTime = pt.timestampMillis,
                                 sampleAfterTime = pt.timestampMillis,
                                 sampleGapMinutes = 0.0,
+                                sampleDistanceMeters = 0.0,
                                 isEstimated = pt.isEstimated,
                                 timeDifferenceSeconds = 0L
                             )
@@ -95,9 +113,12 @@ object TimelinePathInterpolator {
                     if (before != null && after != null) {
                         val gapMillis = after.timestampMillis - before.timestampMillis
                         val gapMinutes = gapMillis / 60000.0
+                        val distanceMeters = haversineDistanceMeters(before.latitude, before.longitude, after.latitude, after.longitude)
 
-                        // Strict threshold check: gap must be <= maxInterpolationGap
-                        if (config.interpolateBetweenPoints && gapMillis in 1..maxGapMillis) {
+                        // Strict threshold checks:
+                        // 1. Time gap <= maxInterpolationGap
+                        // 2. Maximum distance <= maxInterpolationDistanceMeters
+                        if (config.interpolateBetweenPoints && gapMillis in 1..maxGapMillis && distanceMeters <= config.maxInterpolationDistanceMeters) {
                             val fraction = (adjustedPhotoTime - before.timestampMillis).toDouble() / gapMillis.toDouble()
                             val interpLat = before.latitude + fraction * (after.latitude - before.latitude)
                             val interpLng = before.longitude + fraction * (after.longitude - before.longitude)
@@ -133,13 +154,14 @@ object TimelinePathInterpolator {
                                         sampleBeforeTime = before.timestampMillis,
                                         sampleAfterTime = after.timestampMillis,
                                         sampleGapMinutes = gapMinutes,
+                                        sampleDistanceMeters = distanceMeters,
                                         isEstimated = isEstimated,
                                         timeDifferenceSeconds = minDeltaSec
                                     )
                                 )
                             }
                         } else {
-                            // Gap exceeded maxInterpolationGapMinutes!
+                            // Gap or distance exceeded thresholds!
                             // Fallback to nearest neighbor strictly if within maxTimeDeltaSeconds
                             val nearest = if (abs(adjustedPhotoTime - before.timestampMillis) <= abs(adjustedPhotoTime - after.timestampMillis)) before else after
                             val diffSec = abs(adjustedPhotoTime - nearest.timestampMillis) / 1000L
@@ -162,6 +184,7 @@ object TimelinePathInterpolator {
                                         sampleBeforeTime = nearest.timestampMillis,
                                         sampleAfterTime = nearest.timestampMillis,
                                         sampleGapMinutes = gapMinutes,
+                                        sampleDistanceMeters = distanceMeters,
                                         isEstimated = nearest.isEstimated,
                                         timeDifferenceSeconds = diffSec
                                     )

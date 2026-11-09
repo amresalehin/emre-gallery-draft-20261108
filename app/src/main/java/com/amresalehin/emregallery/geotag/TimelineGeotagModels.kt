@@ -179,6 +179,8 @@ data class GeotagConfig(
     val interpolateBetweenPoints: Boolean = true,
     /** Maximum allowed gap between two track points to perform interpolation. Default 1800s (30 min). */
     val maxInterpolationGapSeconds: Long = 1800L,
+    /** Maximum allowed distance between two track points to perform interpolation (default unconstrained). */
+    val maxInterpolationDistanceMeters: Double = Double.MAX_VALUE,
     /** Always skip images that already have GPS coordinates (per user specification). */
     val skipAlreadyGeotagged: Boolean = true
 )

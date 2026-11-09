@@ -803,14 +803,57 @@ class TimelineGeotagTest {
     }
 
     @Test
-    fun `test saved timeline filename in GeotagPreferencesManager`() {
+    fun `test maxInterpolationDistanceKm in GeotagPreferencesManager`() = kotlinx.coroutines.runBlocking {
         val context = androidx.test.core.app.ApplicationProvider.getApplicationContext<android.content.Context>()
         val prefs = com.amresalehin.emregallery.data.preferences.GeotagPreferencesManager(context)
-        assertNull(prefs.getSavedTimelineFileName())
-        prefs.setSavedTimelineFileName("MyTakeout.json")
-        assertEquals("MyTakeout.json", prefs.getSavedTimelineFileName())
-        prefs.setSavedTimelineFileName(null)
-        assertNull(prefs.getSavedTimelineFileName())
+        assertEquals(2.0f, prefs.getMaxInterpolationDistanceKmSync(), 0.01f)
+        prefs.setMaxInterpolationDistanceKm(3.5f)
+        assertEquals(3.5f, prefs.getMaxInterpolationDistanceKmSync(), 0.01f)
+        // Clamp bounds (0.5km to 5.0km)
+        prefs.setMaxInterpolationDistanceKm(0.1f)
+        assertEquals(0.5f, prefs.getMaxInterpolationDistanceKmSync(), 0.01f)
+        prefs.setMaxInterpolationDistanceKm(10.0f)
+        assertEquals(5.0f, prefs.getMaxInterpolationDistanceKmSync(), 0.01f)
+    }
+
+    @Test
+    fun `test distance interpolation threshold in TimelinePathInterpolator`() {
+        val p1 = TimelinePathPoint(timestampMillis = 1000000L, latitude = 48.8566, longitude = 2.3522)
+        val p2 = TimelinePathPoint(timestampMillis = 1060000L, latitude = 48.8700, longitude = 2.3800) // ~2.5 km away
+        val dist = haversineDistanceMeters(p1.latitude, p1.longitude, p2.latitude, p2.longitude)
+        assertTrue("Distance should be approximately 2.5km", dist in 2000.0..3000.0)
+
+        val activity = TimelineActivitySegment(
+            segmentId = "seg-1",
+            startTimestampMillis = 1000000L,
+            endTimestampMillis = 1060000L,
+            pathPoints = listOf(p1, p2)
+        )
+        val timeline = SegmentedTimeline(activitySegments = listOf(activity))
+
+        val photoTime = 1030000L // right in the middle
+
+        // 1. When max distance threshold is 5000m (5.0 km), interpolation should succeed
+        val configAllowed = GeotagConfig(
+            maxInterpolationGapSeconds = 1800L,
+            maxInterpolationDistanceMeters = 5000.0,
+            maxTimeDeltaSeconds = 300L
+        )
+        val matchAllowed = TimelinePathInterpolator.match(photoTime, timeline, configAllowed)
+        assertEquals(GeotagStatus.MATCHED, matchAllowed.status)
+        assertEquals("interpolated", matchAllowed.provenance?.matchMethod)
+        assertNotNull(matchAllowed.provenance?.sampleDistanceMeters)
+
+        // 2. When max distance threshold is 1000m (1.0 km), interpolation must be rejected because 2.5km > 1.0km
+        val configRestricted = GeotagConfig(
+            maxInterpolationGapSeconds = 1800L,
+            maxInterpolationDistanceMeters = 1000.0,
+            maxTimeDeltaSeconds = 300L
+        )
+        val matchRestricted = TimelinePathInterpolator.match(photoTime, timeline, configRestricted)
+        assertEquals(GeotagStatus.MATCHED, matchRestricted.status)
+        // Must fallback to nearest_segment rather than interpolating across excessive distance
+        assertEquals("nearest_segment", matchRestricted.provenance?.matchMethod)
     }
 
     @Test
