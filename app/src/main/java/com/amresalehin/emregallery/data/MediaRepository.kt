@@ -97,6 +97,7 @@ class MediaRepository(private val resolver: ContentResolver) {
             val heightCol = c.getColumnIndex(MediaStore.MediaColumns.HEIGHT)
             val pathCol = c.getColumnIndex(MediaStore.MediaColumns.RELATIVE_PATH)
             val takenCol = c.getColumnIndex(MediaStore.MediaColumns.DATE_TAKEN)
+            val modifiedCol = c.getColumnIndex(MediaStore.MediaColumns.DATE_MODIFIED)
             val durationCol = if (video) c.getColumnIndex(MediaStore.Video.VideoColumns.DURATION) else -1
             val trashedCol = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
                 c.getColumnIndex(MediaStore.MediaColumns.IS_TRASHED)
@@ -109,6 +110,7 @@ class MediaRepository(private val resolver: ContentResolver) {
                 val mimeType = if (mimeCol >= 0) c.getString(mimeCol) else null
                 val added = if (addedCol >= 0) c.getLong(addedCol) else 0L
                 val taken = if (takenCol >= 0 && !c.isNull(takenCol)) c.getLong(takenCol) else 0L
+                val modified = if (modifiedCol >= 0 && !c.isNull(modifiedCol)) c.getLong(modifiedCol) else 0L
                 val size = if (sizeCol >= 0) c.getLong(sizeCol) else 0L
                 val width = if (widthCol >= 0) c.getInt(widthCol) else 0
                 val height = if (heightCol >= 0) c.getInt(heightCol) else 0
@@ -134,7 +136,8 @@ class MediaRepository(private val resolver: ContentResolver) {
                         relativePath = path,
                         isVideo = video,
                         durationMillis = duration,
-                        isTrashed = isTrashed
+                        isTrashed = isTrashed,
+                        dateModifiedSeconds = modified
                     )
                 )
             }
@@ -152,6 +155,7 @@ class MediaRepository(private val resolver: ContentResolver) {
             add(MediaStore.MediaColumns.HEIGHT)
             add(MediaStore.MediaColumns.RELATIVE_PATH)
             add(MediaStore.MediaColumns.DATE_TAKEN)
+            add(MediaStore.MediaColumns.DATE_MODIFIED)
             if (video) {
                 add(MediaStore.Video.VideoColumns.DURATION)
             }
@@ -189,6 +193,7 @@ class MediaRepository(private val resolver: ContentResolver) {
         val heightCol = c.getColumnIndex(MediaStore.MediaColumns.HEIGHT)
         val pathCol = c.getColumnIndex(MediaStore.MediaColumns.RELATIVE_PATH)
         val takenCol = c.getColumnIndex(MediaStore.MediaColumns.DATE_TAKEN)
+        val modifiedCol = c.getColumnIndex(MediaStore.MediaColumns.DATE_MODIFIED)
         val durationCol = if (video) c.getColumnIndex(MediaStore.Video.VideoColumns.DURATION) else -1
         val trashedCol = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
             c.getColumnIndex(MediaStore.MediaColumns.IS_TRASHED)
@@ -201,6 +206,7 @@ class MediaRepository(private val resolver: ContentResolver) {
             val mimeType = if (mimeCol >= 0) c.getString(mimeCol) else null
             val added = if (addedCol >= 0) c.getLong(addedCol) else 0L
             val taken = if (takenCol >= 0 && !c.isNull(takenCol)) c.getLong(takenCol) else 0L
+            val modified = if (modifiedCol >= 0 && !c.isNull(modifiedCol)) c.getLong(modifiedCol) else 0L
             val size = if (sizeCol >= 0) c.getLong(sizeCol) else 0L
             val width = if (widthCol >= 0) c.getInt(widthCol) else 0
             val height = if (heightCol >= 0) c.getInt(heightCol) else 0
@@ -226,7 +232,8 @@ class MediaRepository(private val resolver: ContentResolver) {
                     relativePath = path,
                     isVideo = video,
                     durationMillis = duration,
-                    isTrashed = isTrashed
+                    isTrashed = isTrashed,
+                    dateModifiedSeconds = modified
                 )
             )
         }

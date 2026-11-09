@@ -13,5 +13,6 @@ data class MediaItem(
     val relativePath: String,
     val isVideo: Boolean,
     val durationMillis: Long = 0L,
-    val isTrashed: Boolean = false
+    val isTrashed: Boolean = false,
+    val dateModifiedSeconds: Long = 0L
 )

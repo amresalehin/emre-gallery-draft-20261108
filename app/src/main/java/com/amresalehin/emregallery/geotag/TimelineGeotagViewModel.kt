@@ -205,26 +205,44 @@ class TimelineGeotagViewModel(application: Application) : AndroidViewModel(appli
                             allGalleryMedia.filter { !it.isVideo }
                         }
                         for (item in albumItems) {
+                            val fallbackTaken = if (item.dateTakenMillis > 0L) item.dateTakenMillis else null
+                            val fallbackModified = if (item.dateModifiedSeconds > 0L) {
+                                item.dateModifiedSeconds * 1000L
+                            } else if (item.dateAddedSeconds > 0L) {
+                                item.dateAddedSeconds * 1000L
+                            } else null
+
                             candidateList.add(
                                 TimelineGeotagEngine.extractCandidate(
                                     context = context,
                                     uri = Uri.parse(item.uri),
                                     fallbackPath = null,
                                     displayName = item.name,
-                                    isVideo = item.isVideo
+                                    isVideo = item.isVideo,
+                                    fallbackTimestampMillis = fallbackTaken,
+                                    fallbackLastModifiedMillis = fallbackModified
                                 )
                             )
                         }
                     }
                     GeotagSourceType.ALL_GALLERY_PHOTOS -> {
                         for (item in allGalleryMedia.filter { !it.isVideo }) {
+                            val fallbackTaken = if (item.dateTakenMillis > 0L) item.dateTakenMillis else null
+                            val fallbackModified = if (item.dateModifiedSeconds > 0L) {
+                                item.dateModifiedSeconds * 1000L
+                            } else if (item.dateAddedSeconds > 0L) {
+                                item.dateAddedSeconds * 1000L
+                            } else null
+
                             candidateList.add(
                                 TimelineGeotagEngine.extractCandidate(
                                     context = context,
                                     uri = Uri.parse(item.uri),
                                     fallbackPath = null,
                                     displayName = item.name,
-                                    isVideo = item.isVideo
+                                    isVideo = item.isVideo,
+                                    fallbackTimestampMillis = fallbackTaken,
+                                    fallbackLastModifiedMillis = fallbackModified
                                 )
                             )
                         }
@@ -257,17 +275,20 @@ class TimelineGeotagViewModel(application: Application) : AndroidViewModel(appli
             val projection = arrayOf(
                 DocumentsContract.Document.COLUMN_DOCUMENT_ID,
                 DocumentsContract.Document.COLUMN_DISPLAY_NAME,
-                DocumentsContract.Document.COLUMN_MIME_TYPE
+                DocumentsContract.Document.COLUMN_MIME_TYPE,
+                DocumentsContract.Document.COLUMN_LAST_MODIFIED
             )
             resolver.query(uri, projection, null, null, null)?.use { cursor ->
                 val idCol = cursor.getColumnIndex(DocumentsContract.Document.COLUMN_DOCUMENT_ID)
                 val nameCol = cursor.getColumnIndex(DocumentsContract.Document.COLUMN_DISPLAY_NAME)
                 val mimeCol = cursor.getColumnIndex(DocumentsContract.Document.COLUMN_MIME_TYPE)
+                val modCol = cursor.getColumnIndex(DocumentsContract.Document.COLUMN_LAST_MODIFIED)
 
                 while (cursor.moveToNext()) {
                     val childId = cursor.getString(idCol)
                     val name = cursor.getString(nameCol) ?: "file"
                     val mime = cursor.getString(mimeCol) ?: ""
+                    val lastMod = if (modCol >= 0 && !cursor.isNull(modCol)) cursor.getLong(modCol) else 0L
 
                     if (mime == DocumentsContract.Document.MIME_TYPE_DIR) {
                         val subTree = DocumentsContract.buildChildDocumentsUriUsingTree(treeUri, childId)
@@ -280,7 +301,8 @@ class TimelineGeotagViewModel(application: Application) : AndroidViewModel(appli
                                 uri = docUri,
                                 fallbackPath = null,
                                 displayName = name,
-                                isVideo = false
+                                isVideo = false,
+                                fallbackLastModifiedMillis = if (lastMod > 0L) lastMod else null
                             )
                         )
                     }

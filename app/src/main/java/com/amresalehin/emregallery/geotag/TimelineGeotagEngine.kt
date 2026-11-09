@@ -38,14 +38,14 @@ object TimelineGeotagEngine {
         uri: Uri,
         fallbackPath: String? = null,
         displayName: String? = null,
-        isVideo: Boolean = false
+        isVideo: Boolean = false,
+        fallbackTimestampMillis: Long? = null,
+        fallbackLastModifiedMillis: Long? = null
     ): ImageGeotagCandidate {
         val name = displayName ?: uri.lastPathSegment?.substringAfterLast('/') ?: "image.jpg"
         var hasGps = false
         var existingLat: Double? = null
         var existingLng: Double? = null
-        var dateTimeMillis: Long? = null
-        var offsetStr: String? = null
 
         val exif = readExifInterface(context, uri, fallbackPath)
         if (exif != null) {
@@ -66,12 +66,103 @@ object TimelineGeotagEngine {
             }
         }
 
+        var fallbackMs = fallbackTimestampMillis
+        var lastModifiedMs = fallbackLastModifiedMillis
+
+        if (fallbackPath != null) {
+            val f = File(fallbackPath)
+            if (f.exists() && f.lastModified() > 0L) {
+                if (lastModifiedMs == null) lastModifiedMs = f.lastModified()
+            }
+        }
+
+        if (lastModifiedMs == null && (uri.scheme == ContentResolver.SCHEME_FILE || uri.scheme == null)) {
+            val path = uri.path
+            if (path != null) {
+                val f = File(path)
+                if (f.exists() && f.lastModified() > 0L) {
+                    lastModifiedMs = f.lastModified()
+                }
+            }
+        }
+
+        if (uri.scheme == ContentResolver.SCHEME_CONTENT && (fallbackMs == null || lastModifiedMs == null)) {
+            runCatching {
+                val projection = arrayOf(
+                    MediaStore.Images.Media.DATE_TAKEN,
+                    MediaStore.MediaColumns.DATE_MODIFIED,
+                    MediaStore.Images.Media.DATE_ADDED,
+                    MediaStore.MediaColumns.DATA
+                )
+                context.contentResolver.query(uri, projection, null, null, null)?.use { cursor ->
+                    if (cursor.moveToFirst()) {
+                        val takenIdx = cursor.getColumnIndex(MediaStore.Images.Media.DATE_TAKEN)
+                        val modIdx = cursor.getColumnIndex(MediaStore.MediaColumns.DATE_MODIFIED)
+                        val addedIdx = cursor.getColumnIndex(MediaStore.Images.Media.DATE_ADDED)
+                        val dataIdx = cursor.getColumnIndex(MediaStore.MediaColumns.DATA)
+
+                        val taken = if (takenIdx >= 0 && !cursor.isNull(takenIdx)) cursor.getLong(takenIdx) else 0L
+                        val modSec = if (modIdx >= 0 && !cursor.isNull(modIdx)) cursor.getLong(modIdx) else 0L
+                        val addedSec = if (addedIdx >= 0 && !cursor.isNull(addedIdx)) cursor.getLong(addedIdx) else 0L
+                        val dataPath = if (dataIdx >= 0 && !cursor.isNull(dataIdx)) cursor.getString(dataIdx) else null
+
+                        if (fallbackMs == null && taken > 0L) {
+                            fallbackMs = taken
+                        }
+                        if (lastModifiedMs == null) {
+                            if (modSec > 0L) {
+                                lastModifiedMs = modSec * 1000L
+                            } else if (!dataPath.isNullOrBlank()) {
+                                val f = File(dataPath)
+                                if (f.exists() && f.lastModified() > 0L) {
+                                    lastModifiedMs = f.lastModified()
+                                }
+                            } else if (addedSec > 0L) {
+                                lastModifiedMs = addedSec * 1000L
+                            }
+                        }
+                    }
+                }
+            }
+
+            // DocumentsContract document query fallback
+            if (lastModifiedMs == null) {
+                runCatching {
+                    val docProjection = arrayOf(android.provider.DocumentsContract.Document.COLUMN_LAST_MODIFIED)
+                    context.contentResolver.query(uri, docProjection, null, null, null)?.use { c ->
+                        if (c.moveToFirst()) {
+                            val lmIdx = c.getColumnIndex(android.provider.DocumentsContract.Document.COLUMN_LAST_MODIFIED)
+                            if (lmIdx >= 0 && !c.isNull(lmIdx)) {
+                                val lm = c.getLong(lmIdx)
+                                if (lm > 0L) lastModifiedMs = lm
+                            }
+                        }
+                    }
+                }
+            }
+
+            // FileDescriptor stat fallback
+            if (lastModifiedMs == null) {
+                runCatching {
+                    context.contentResolver.openFileDescriptor(uri, "r")?.use { pfd ->
+                        val stat = android.system.Os.fstat(pfd.fileDescriptor)
+                        if (stat.st_mtime > 0L) {
+                            lastModifiedMs = stat.st_mtime * 1000L
+                        }
+                    }
+                }
+            }
+        }
+
         val resolvedTimestamp = PhotoTimestampResolver.resolve(
             exif = exif,
-            filePath = fallbackPath
+            filePath = fallbackPath,
+            displayName = name,
+            fallbackMillis = fallbackMs,
+            fallbackLastModifiedMillis = lastModifiedMs
         )
-        dateTimeMillis = resolvedTimestamp?.timeMs
-        offsetStr = resolvedTimestamp?.offsetString
+        val dateTimeMillis = resolvedTimestamp?.timeMs
+        val offsetStr = resolvedTimestamp?.offsetString
         val timestampSource = resolvedTimestamp?.sourceTag
 
         return ImageGeotagCandidate(
@@ -120,7 +211,7 @@ object TimelineGeotagEngine {
             ?: return GeotagResultItem(
                 candidate = candidate,
                 status = GeotagStatus.NO_TIMESTAMP,
-                errorMessage = "No capture timestamp found in image EXIF"
+                errorMessage = "No capture timestamp found in image EXIF, filename, or metadata"
             )
 
         // Adjust for any camera clock drift offset configured by the user
@@ -277,7 +368,7 @@ object TimelineGeotagEngine {
             ?: return GeotagResultItem(
                 candidate = candidate,
                 status = GeotagStatus.NO_TIMESTAMP,
-                errorMessage = "No capture timestamp found in image EXIF"
+                errorMessage = "No capture timestamp found in image EXIF, filename, or metadata"
             )
 
         val adjustedPhotoTime = photoBaseMillis + (config.cameraClockOffsetSeconds * 1000L)

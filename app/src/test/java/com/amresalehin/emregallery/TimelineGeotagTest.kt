@@ -455,12 +455,121 @@ class TimelineGeotagTest {
         val resolved = PhotoTimestampResolver.resolve(
             exif = null,
             filePath = tempFile.absolutePath,
+            displayName = null,
             fallbackMillis = null
         )
         assertNotNull(resolved)
         assertEquals("FileLastModified", resolved?.sourceTag)
         assertEquals(1700000000000L, resolved?.timeMs)
         tempFile.delete()
+    }
+
+    @Test
+    fun `test PhotoTimestampResolver resolves filename timestamps`() {
+        val zone = ZoneOffset.UTC
+
+        // Standard camera naming: IMG_YYYYMMDD_HHMMSS.jpg
+        val imgTime = PhotoTimestampResolver.parseFilenameTimestamp("IMG_20230514_153022.jpg", zone)
+        assertNotNull(imgTime)
+        val expectedImg = java.time.LocalDateTime.of(2023, 5, 14, 15, 30, 22).toInstant(ZoneOffset.UTC).toEpochMilli()
+        assertEquals(expectedImg, imgTime)
+
+        // Pixel naming: PXL_YYYYMMDD_HHMMSSNNN.jpg
+        val pxlTime = PhotoTimestampResolver.parseFilenameTimestamp("PXL_20240102_123456789.jpg", zone)
+        assertNotNull(pxlTime)
+        val expectedPxl = java.time.LocalDateTime.of(2024, 1, 2, 12, 34, 56).toInstant(ZoneOffset.UTC).toEpochMilli()
+        assertEquals(expectedPxl, pxlTime)
+
+        // Screenshot naming: Screenshot_YYYY-MM-DD-HH-mm-ss.png
+        val screenTime = PhotoTimestampResolver.parseFilenameTimestamp("Screenshot_2023-08-15-14-20-33.png", zone)
+        assertNotNull(screenTime)
+        val expectedScreen = java.time.LocalDateTime.of(2023, 8, 15, 14, 20, 33).toInstant(ZoneOffset.UTC).toEpochMilli()
+        assertEquals(expectedScreen, screenTime)
+
+        // WhatsApp naming: WhatsApp Image 2023-05-14 at 15.30.22.jpeg
+        val waTime = PhotoTimestampResolver.parseFilenameTimestamp("WhatsApp Image 2023-05-14 at 15.30.22.jpeg", zone)
+        assertNotNull(waTime)
+        assertEquals(expectedImg, waTime)
+
+        // Unix epoch milliseconds: 1684078222000.jpg
+        val epochTime = PhotoTimestampResolver.parseFilenameTimestamp("1684078222000.jpg", zone)
+        assertEquals(1684078222000L, epochTime)
+
+        // Full resolve chain returning FilenameTimestamp
+        val resolved = PhotoTimestampResolver.resolve(
+            exif = null,
+            filePath = null,
+            displayName = "IMG_20230514_153022.jpg",
+            fallbackMillis = null,
+            systemZoneId = zone
+        )
+        assertNotNull(resolved)
+        assertEquals("FilenameTimestamp", resolved?.sourceTag)
+        assertEquals(expectedImg, resolved?.timeMs)
+    }
+
+    @Test
+    fun `test PhotoTimestampResolver MediaStore date fallback when EXIF and filename lack timestamp`() {
+        val resolved = PhotoTimestampResolver.resolve(
+            exif = null,
+            filePath = null,
+            displayName = "generic_download.jpg",
+            fallbackMillis = 1715000000000L
+        )
+        assertNotNull(resolved)
+        assertEquals("MediaStoreDate", resolved?.sourceTag)
+        assertEquals(1715000000000L, resolved?.timeMs)
+    }
+
+    @Test
+    fun `test extractCandidate succeeds without DateTimeOriginal via filename or MediaStore`() {
+        val context = androidx.test.core.app.ApplicationProvider.getApplicationContext<android.content.Context>()
+        val uri = android.net.Uri.parse("content://media/external/images/media/999")
+
+        val candidate = TimelineGeotagEngine.extractCandidate(
+            context = context,
+            uri = uri,
+            fallbackPath = null,
+            displayName = "IMG_20230514_153022.jpg",
+            isVideo = false,
+            fallbackTimestampMillis = 1715000000000L
+        )
+
+        assertNotNull(candidate.dateTimeOriginalMillis)
+        assertEquals("FilenameTimestamp", candidate.timestampSource)
+    }
+
+    @Test
+    fun `test PhotoTimestampResolver and extractCandidate fall back to lastmodified`() {
+        val context = androidx.test.core.app.ApplicationProvider.getApplicationContext<android.content.Context>()
+        val expectedLastModified = 1705000000000L
+
+        // Direct resolver check with generic filename and no EXIF
+        val resolved = PhotoTimestampResolver.resolve(
+            exif = null,
+            filePath = null,
+            displayName = "download.jpg",
+            fallbackMillis = null,
+            fallbackLastModifiedMillis = expectedLastModified
+        )
+        assertNotNull(resolved)
+        assertEquals("FileLastModified", resolved?.sourceTag)
+        assertEquals(expectedLastModified, resolved?.timeMs)
+
+        // Engine candidate extraction check falling back to lastModified
+        val candidate = TimelineGeotagEngine.extractCandidate(
+            context = context,
+            uri = android.net.Uri.parse("content://media/external/images/media/1001"),
+            fallbackPath = null,
+            displayName = "unnamed_photo.png",
+            isVideo = false,
+            fallbackTimestampMillis = null,
+            fallbackLastModifiedMillis = expectedLastModified
+        )
+
+        assertNotNull(candidate.dateTimeOriginalMillis)
+        assertEquals(expectedLastModified, candidate.dateTimeOriginalMillis)
+        assertEquals("FileLastModified", candidate.timestampSource)
     }
 
     // --- Phase 2: GoogleTimelineParser Segmented Timeline Tests ---

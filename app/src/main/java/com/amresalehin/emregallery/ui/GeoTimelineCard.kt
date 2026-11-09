@@ -195,13 +195,22 @@ fun GeoTimelineCard(
 
             val candidates = mutableListOf<ImageGeotagCandidate>()
             for (item in filteredMedia) {
+                val fallbackTaken = if (item.dateTakenMillis > 0L) item.dateTakenMillis else null
+                val fallbackModified = if (item.dateModifiedSeconds > 0L) {
+                    item.dateModifiedSeconds * 1000L
+                } else if (item.dateAddedSeconds > 0L) {
+                    item.dateAddedSeconds * 1000L
+                } else null
+
                 candidates.add(
                     TimelineGeotagEngine.extractCandidate(
                         context = context,
                         uri = Uri.parse(item.uri),
                         fallbackPath = null,
                         displayName = item.name,
-                        isVideo = false
+                        isVideo = false,
+                        fallbackTimestampMillis = fallbackTaken,
+                        fallbackLastModifiedMillis = fallbackModified
                     )
                 )
             }
@@ -242,7 +251,18 @@ fun GeoTimelineCard(
                 }
                 if (!isRunning || isCancelled) break
 
-                val timestampStr = formatTimestamp(candidate.dateTimeOriginalMillis ?: 0L)
+                val rawTime = candidate.dateTimeOriginalMillis
+                val timestampStr = if (rawTime != null && rawTime > 0L) {
+                    val base = formatTimestamp(rawTime)
+                    val src = candidate.timestampSource
+                    if (!src.isNullOrBlank() && src != "DateTimeOriginal") {
+                        "$base ($src)"
+                    } else {
+                        base
+                    }
+                } else {
+                    "No timestamp"
+                }
 
                 val match = if (currentTimeline != null) {
                     TimelineGeotagEngine.matchCandidateWithTimeline(
