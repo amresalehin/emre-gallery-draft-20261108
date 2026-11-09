@@ -214,6 +214,10 @@ class AiConfigurationTest {
         assertEquals("Florence-2 Base", florence.displayName)
         assertEquals("onnx-community/Florence-2-base", florence.upstreamRepo)
         assertEquals(ModelTaskType.VISION_LANGUAGE, florence.taskType)
+        assertTrue("Florence-2 description must identify a vision-language model",
+            florence.description.contains("vision-language", ignoreCase = true))
+        assertFalse("Florence-2 must not be described as an OCR-only model",
+            florence.description.contains("OCR-only", ignoreCase = true))
         assertEquals(ModelArchitecture.FLORENCE2, florence.architecture)
         assertFalse("Florence-2 graph validation is not an image-generation runtime", florence.hasRuntimeAdapter)
 

@@ -28,7 +28,7 @@ object LocalModelRegistry {
         displayName = "Florence-2 Base",
         upstreamRepo = FLORENCE_2_REPO,
         upstreamRevision = FLORENCE_2_REVISION,
-        description = "Microsoft Florence-2 Base ONNX Vision-Language Model (Captioning, VQA, OCR & Extraction)",
+        description = "Microsoft Florence-2 Base ONNX vision-language model for image captioning, visual question answering, object/region understanding, and document text recognition.",
         taskType = ModelTaskType.VISION_LANGUAGE,
         architecture = ModelArchitecture.FLORENCE2,
         license = "MIT",
@@ -260,6 +260,7 @@ object LocalModelRegistry {
     }
 
     fun getSpec(idOrAlias: String): LocalModelSpec {
-        return findSpec(idOrAlias) ?: FLORENCE_2_SPEC
+        return findSpec(idOrAlias)
+            ?: throw IllegalArgumentException("Unsupported local model id or alias: '" + idOrAlias + "'.")
     }
 }
