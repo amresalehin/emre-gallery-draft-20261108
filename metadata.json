@@ -1,0 +1,6 @@
+{
+  "name": "Emre Gallery",
+  "description": "Smart media gallery, viewer, offline photo map, OCR, face recognition, and media downloader with FFmpeg integration.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

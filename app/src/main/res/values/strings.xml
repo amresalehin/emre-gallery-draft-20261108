@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Emre Gallery</string>
+    <string name="welcome_tap_to_continue">Tap to continue</string>
+</resources>
