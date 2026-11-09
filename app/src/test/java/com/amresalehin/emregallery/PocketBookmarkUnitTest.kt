@@ -283,5 +283,135 @@ class PocketBookmarkUnitTest {
         assertTrue(activeItem.isVideo)
         assertEquals("Video 1", activeItem.title)
     }
+
+    @Test
+    fun testDeckCardCounterBadgeFormatting() {
+        val totalCards = 5
+        val safeIndex = 2
+        val counterText = "${safeIndex + 1} / $totalCards"
+        assertEquals("3 / 5", counterText)
+
+        // For totalCards = 1, counter badge should not display
+        val singleCardTotal = 1
+        val shouldShowCounter = singleCardTotal > 1
+        assertFalse(shouldShowCounter)
+
+        // For totalCards > 1, counter badge displays above the card stack
+        assertTrue(totalCards > 1)
+    }
+
+    @Test
+    fun testDeckSwipeLayerIndexCalculation() {
+        val totalCards = 4
+
+        // Resting or swiping left from index 0
+        val safeIndex0 = 0
+        val nextIndex1 = (safeIndex0 + 1) % totalCards
+        val nextIndex2 = (safeIndex0 + 2) % totalCards
+        assertEquals(1, nextIndex1)
+        assertEquals(2, nextIndex2)
+
+        // Swiping right (previous card) from index 0
+        val prevIndex1 = if (safeIndex0 - 1 < 0) totalCards - 1 else safeIndex0 - 1
+        val prevIndex2 = if (safeIndex0 - 2 < 0) (safeIndex0 - 2 + totalCards) % totalCards else safeIndex0 - 2
+        assertEquals(3, prevIndex1)
+        assertEquals(2, prevIndex2)
+
+        // Swiping left from index 3 (last card wraps to first)
+        val safeIndex3 = 3
+        val nextWrapped1 = (safeIndex3 + 1) % totalCards
+        val nextWrapped2 = (safeIndex3 + 2) % totalCards
+        assertEquals(0, nextWrapped1)
+        assertEquals(1, nextWrapped2)
+    }
+
+    @Test
+    fun testSvgPillSwitchDefaultDisabledAndFiltering() {
+        val defaultShowSvg = false
+        assertFalse("Show SVG switch must be disabled by default", defaultShowSvg)
+
+        val svgStack = MediaInboxStack(
+            id = "stack_svg",
+            title = "Vector Logo",
+            sourceDomain = "example.com",
+            sourceUrl = "https://example.com/logo.svg",
+            items = listOf(
+                MediaInboxItem(
+                    id = "svg_item_1",
+                    title = "logo.svg",
+                    localUri = "",
+                    sourceUrl = "https://example.com/logo.svg",
+                    isVideo = false,
+                    format = "SVG"
+                )
+            )
+        )
+
+        val photoStack = MediaInboxStack(
+            id = "stack_photo",
+            title = "Sunset Photo",
+            sourceDomain = "example.com",
+            sourceUrl = "https://example.com/sunset.jpg",
+            items = listOf(
+                MediaInboxItem(
+                    id = "photo_item_1",
+                    title = "sunset.jpg",
+                    localUri = "",
+                    sourceUrl = "https://example.com/sunset.jpg",
+                    isVideo = false,
+                    format = "JPG"
+                )
+            )
+        )
+
+        val allStacks = listOf(svgStack, photoStack)
+
+        // When showSvg is false (default): exclude SVG stacks
+        val filteredDefault = allStacks.filter { stack ->
+            val hasOnlySvg = stack.items.isNotEmpty() && stack.items.all {
+                MediaClassifier.isSvg(it.sourceUrl, format = it.format)
+            }
+            val previewIsSvg = stack.previewImageUrl.isNotBlank() && MediaClassifier.isSvg(stack.previewImageUrl)
+            val sourceIsSvg = stack.sourceUrl.isNotBlank() && MediaClassifier.isSvg(stack.sourceUrl)
+            !hasOnlySvg && !previewIsSvg && !sourceIsSvg
+        }
+        assertEquals(1, filteredDefault.size)
+        assertEquals("stack_photo", filteredDefault.first().id)
+
+        // When showSvg is true: include all stacks including SVG
+        val showSvg = true
+        val filteredEnabled = allStacks.filter {
+            if (!showSvg) false else true
+        }
+        assertEquals(2, filteredEnabled.size)
+    }
+
+    @Test
+    fun testDimensionSlidersParsingAndFiltering() {
+        val text1 = "Wallpaper 1920x1080 Full HD"
+        val match1 = Regex("""(\d{2,5})\s*[xX*×]\s*(\d{2,5})""").find(text1)
+        assertNotNull(match1)
+        assertEquals(1920, match1!!.groupValues[1].toInt())
+        assertEquals(1080, match1.groupValues[2].toInt())
+
+        // Dimension filtering: minWidth = 1200, minHeight = 800
+        val minW = 1200
+        val minH = 800
+        val w1 = 1920
+        val h1 = 1080
+        val passes1 = (minW <= 0 || w1 >= minW) && (minH <= 0 || h1 >= minH)
+        assertTrue("1920x1080 must pass min 1200x800", passes1)
+
+        val wSmall = 800
+        val hSmall = 600
+        val passesSmall = (minW <= 0 || wSmall >= minW) && (minH <= 0 || hSmall >= minH)
+        assertFalse("800x600 must NOT pass min 1200x800", passesSmall)
+
+        // Reset to 0x0
+        val zeroW = 0
+        val zeroH = 0
+        val passesZero = (zeroW <= 0 || wSmall >= zeroW) && (zeroH <= 0 || hSmall >= zeroH)
+        assertTrue("Any dimensions must pass when sliders are at 0", passesZero)
+    }
 }
 

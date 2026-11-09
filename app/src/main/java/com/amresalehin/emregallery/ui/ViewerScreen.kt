@@ -47,6 +47,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
@@ -448,7 +449,9 @@ fun ViewerScreen(
                 flingBehavior = PagerDefaults.flingBehavior(state = pagerState),
                 userScrollEnabled = !isCurrentZoomed && !videoState.isFullscreen && !showDetails && !isClosing && transitionProgress.value >= 0.99f,
                 pageSpacing = 16.dp,
-                modifier = Modifier.fillMaxSize(),
+                modifier = Modifier
+                    .fillMaxSize()
+                    .blur(if (showDetails) 16.dp else 0.dp),
                 key = { pageIndex ->
                     val activeList = if (isStoryMode) currentStoryItems else items
                     val uri = activeList.getOrNull(pageIndex)?.uri ?: pageIndex.toString()

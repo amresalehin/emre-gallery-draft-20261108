@@ -53,6 +53,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
+import coil.imageLoader
 import coil.request.ImageRequest
 import com.amresalehin.emregallery.data.MediaInboxItem
 import com.amresalehin.emregallery.data.MediaInboxStack
@@ -61,6 +62,7 @@ import kotlinx.coroutines.launch
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.*
+import kotlin.math.abs
 
 /**
  * Fullscreen separate page for Bookmark Detail view in Emre Gallery.
@@ -274,6 +276,32 @@ fun PocketBookmarkViewerPage(
         }
     }
 
+    // Preload next and previous deck cards into memory cache so visible previews are instantly ready
+    LaunchedEffect(safeIndex, effectiveMediaList) {
+        if (effectiveMediaList.isNotEmpty()) {
+            val total = effectiveMediaList.size
+            val preloadIndices = listOf(
+                (safeIndex + 1) % total,
+                (safeIndex + 2) % total,
+                if (safeIndex - 1 < 0) total - 1 else safeIndex - 1
+            ).distinct()
+            for (idx in preloadIndices) {
+                val itm = effectiveMediaList.getOrNull(idx) ?: continue
+                val path = if (itm.localUri.isNotBlank()) {
+                    val f = File(itm.localUri.removePrefix("file://"))
+                    if (f.exists()) f.absolutePath else itm.sourceUrl
+                } else itm.sourceUrl
+                if (path.isNotBlank()) {
+                    val request = ImageRequest.Builder(context)
+                        .data(path)
+                        .crossfade(true)
+                        .build()
+                    context.imageLoader.enqueue(request)
+                }
+            }
+        }
+    }
+
     val dateFormatted = remember(stack.timestampMillis) {
         val sdf = SimpleDateFormat("MMM d, yyyy · h:mm a", Locale.getDefault())
         sdf.format(Date(stack.timestampMillis))
@@ -309,6 +337,40 @@ fun PocketBookmarkViewerPage(
         color = PocketThemeColors.background(isDark)
     ) {
         Box(modifier = Modifier.fillMaxSize()) {
+            // Ambient blurred backdrop of the current media item filling the media detail screen
+            val currentItemForBlur = effectiveMediaList.getOrNull(safeIndex)
+            val blurMediaPath = remember(currentItemForBlur) {
+                if (currentItemForBlur?.localUri?.isNotBlank() == true) {
+                    val f = File(currentItemForBlur.localUri.removePrefix("file://"))
+                    if (f.exists()) f.absolutePath else currentItemForBlur.sourceUrl
+                } else currentItemForBlur?.sourceUrl ?: ""
+            }
+
+            if (blurMediaPath.isNotBlank()) {
+                AsyncImage(
+                    model = ImageRequest.Builder(context)
+                        .data(blurMediaPath)
+                        .crossfade(true)
+                        .build(),
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .blur(32.dp)
+                        .graphicsLayer {
+                            alpha = if (isDark) 0.35f else 0.22f
+                        }
+                )
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(
+                            if (isDark) Color.Black.copy(alpha = 0.50f)
+                            else Color.White.copy(alpha = 0.55f)
+                        )
+                )
+            }
+
             // Main Screen Area: Top Bar, 9:14 Card Deck (Major Part of Screen)
             Column(
                 modifier = Modifier
@@ -447,12 +509,35 @@ fun PocketBookmarkViewerPage(
                     }
                 }
 
+                // Card counter pill indicator (e.g. "2 / 5") moved ABOVE card stack
+                if (totalCards > 1) {
+                    Surface(
+                        shape = CircleShape,
+                        color = if (isDark) Color(0xFF26242C) else Color(0xFFEDE8F0),
+                        border = BorderStroke(0.5.dp, if (isDark) dividerCol.copy(alpha = 0.4f) else Color(0xFFDAD5DF)),
+                        modifier = Modifier
+                            .padding(top = 2.dp, bottom = 6.dp)
+                            .testTag("bookmark_deck_counter_badge")
+                    ) {
+                        Text(
+                            text = "${safeIndex + 1} / $totalCards",
+                            style = MaterialTheme.typography.labelMedium.copy(
+                                fontWeight = FontWeight.SemiBold,
+                                fontSize = 12.sp,
+                                letterSpacing = 0.5.sp
+                            ),
+                            color = textColor,
+                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 5.dp)
+                        )
+                    }
+                }
+
                 // Major Screen Area: Deck Card Stack (5:7 Aspect Ratio, Enlarged Dimensions)
                 Box(
                     modifier = Modifier
                         .weight(1f)
                         .fillMaxWidth()
-                        .padding(start = 12.dp, end = 12.dp, top = 6.dp, bottom = 4.dp),
+                        .padding(start = 12.dp, end = 12.dp, top = 2.dp, bottom = 6.dp),
                     contentAlignment = Alignment.Center
                 ) {
                     BoxWithConstraints(
@@ -473,13 +558,27 @@ fun PocketBookmarkViewerPage(
                             deckWidth = deckHeight * targetRatio
                         }
 
+                        val absOffset = abs(offsetX.value)
+                        val swipeProgress = (absOffset / 280f).coerceIn(0f, 1f)
+                        val isDraggingRight = offsetX.value > 15f
+
+                        val nextIndex1 = (safeIndex + 1) % totalCards
+                        val nextIndex2 = (safeIndex + 2) % totalCards
+                        val prevIndex1 = if (safeIndex - 1 < 0) totalCards - 1 else safeIndex - 1
+                        val prevIndex2 = if (safeIndex - 2 < 0) (safeIndex - 2 + totalCards) % totalCards else safeIndex - 2
+
+                        val underlyingIndex = if (isDraggingRight) prevIndex1 else nextIndex1
+                        val bottomDeckIndex = if (isDraggingRight) prevIndex2 else nextIndex2
+
                         Box(
                             modifier = Modifier.size(width = deckWidth, height = deckHeight),
                             contentAlignment = Alignment.Center
                         ) {
-                            // Layer 1 (Bottom peeking card: 2 cards ahead, offset x = 18.dp, y = -12.dp, rotationZ = 6.5f)
+                            // Layer 1 (Bottom peeking card: 2 cards ahead, with visible media preview)
                             if (totalCards > 2) {
-                                val backIndex2 = (safeIndex + 2) % totalCards
+                                val layer1DimAlpha = 0.40f - (0.15f * swipeProgress)
+                                val bottomItem = effectiveMediaList.getOrNull(bottomDeckIndex)
+
                                 Surface(
                                     shape = RoundedCornerShape(32.dp),
                                     color = PocketThemeColors.stackLayer1(isDark),
@@ -488,18 +587,46 @@ fun PocketBookmarkViewerPage(
                                     modifier = Modifier
                                         .fillMaxSize()
                                         .graphicsLayer {
-                                            translationX = 18.dp.toPx()
-                                            translationY = (-12).dp.toPx()
-                                            rotationZ = 6.5f
+                                            translationX = 18.dp.toPx() - (8.dp.toPx() * swipeProgress)
+                                            translationY = (-12).dp.toPx() + (6.dp.toPx() * swipeProgress)
+                                            rotationZ = 6.5f - (3.0f * swipeProgress)
+                                            val scale = 0.90f + (0.05f * swipeProgress)
+                                            scaleX = scale
+                                            scaleY = scale
                                         }
                                 ) {
-                                    Box(modifier = Modifier.fillMaxSize())
+                                    Box(modifier = Modifier.fillMaxSize()) {
+                                        BookmarkDeckCardContent(
+                                            item = bottomItem,
+                                            stack = stack,
+                                            faviconUrl = faviconUrl,
+                                            textColor = textColor,
+                                            isDark = isDark,
+                                            isFront = false,
+                                            isPlayingVideo = false,
+                                            isDeckVideoMuted = true,
+                                            onToggleMute = {},
+                                            modifier = Modifier.fillMaxSize()
+                                        )
+                                        if (layer1DimAlpha > 0.01f) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .fillMaxSize()
+                                                    .background(
+                                                        if (isDark) Color.Black.copy(alpha = layer1DimAlpha)
+                                                        else Color.White.copy(alpha = layer1DimAlpha * 0.7f)
+                                                    )
+                                            )
+                                        }
+                                    }
                                 }
                             }
 
-                            // Layer 2 (Middle peeking card: next media, offset x = 10.dp, y = -6.dp, rotationZ = 3.5f)
+                            // Layer 2 (Middle peeking card: next media ready with visible preview)
                             if (totalCards > 1) {
-                                val backIndex1 = (safeIndex + 1) % totalCards
+                                val layer2DimAlpha = 0.25f * (1f - swipeProgress)
+                                val nextItem = effectiveMediaList.getOrNull(underlyingIndex)
+
                                 Surface(
                                     shape = RoundedCornerShape(32.dp),
                                     color = PocketThemeColors.stackLayer2(isDark),
@@ -508,30 +635,50 @@ fun PocketBookmarkViewerPage(
                                     modifier = Modifier
                                         .fillMaxSize()
                                         .graphicsLayer {
-                                            translationX = 10.dp.toPx()
-                                            translationY = (-6).dp.toPx()
-                                            rotationZ = 3.5f
+                                            translationX = 10.dp.toPx() * (1f - swipeProgress)
+                                            translationY = (-6).dp.toPx() * (1f - swipeProgress)
+                                            rotationZ = 3.5f * (1f - swipeProgress)
+                                            val scale = 0.95f + (0.05f * swipeProgress)
+                                            scaleX = scale
+                                            scaleY = scale
                                         }
                                         .clickable {
                                             scope.launch {
-                                                offsetX.animateTo(-600f, tween(180))
-                                                currentIndex = backIndex1
+                                                offsetX.animateTo(-1000f, tween(200))
+                                                currentIndex = underlyingIndex
                                                 offsetX.snapTo(0f)
                                             }
                                         }
                                 ) {
-                                    Box(modifier = Modifier.fillMaxSize())
+                                    Box(modifier = Modifier.fillMaxSize()) {
+                                        BookmarkDeckCardContent(
+                                            item = nextItem,
+                                            stack = stack,
+                                            faviconUrl = faviconUrl,
+                                            textColor = textColor,
+                                            isDark = isDark,
+                                            isFront = false,
+                                            isPlayingVideo = false,
+                                            isDeckVideoMuted = true,
+                                            onToggleMute = {},
+                                            modifier = Modifier.fillMaxSize()
+                                        )
+                                        if (layer2DimAlpha > 0.01f) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .fillMaxSize()
+                                                    .background(
+                                                        if (isDark) Color.Black.copy(alpha = layer2DimAlpha)
+                                                        else Color.White.copy(alpha = layer2DimAlpha * 0.7f)
+                                                    )
+                                            )
+                                        }
+                                    }
                                 }
                             }
 
                             // Layer 3 (Top Front Card in Deck - 5:7 Aspect Ratio Container, Interactive Swipe Gesture)
                             val currentItem = effectiveMediaList.getOrNull(safeIndex)
-                            val currentMediaPath = remember(currentItem) {
-                                if (currentItem?.localUri?.isNotBlank() == true) {
-                                    val f = File(currentItem.localUri.removePrefix("file://"))
-                                    if (f.exists()) f.absolutePath else currentItem.sourceUrl
-                                } else currentItem?.sourceUrl ?: ""
-                            }
 
                             Surface(
                                 shape = RoundedCornerShape(32.dp),
@@ -542,7 +689,7 @@ fun PocketBookmarkViewerPage(
                                     .fillMaxSize()
                                     .graphicsLayer {
                                         translationX = offsetX.value
-                                        rotationZ = (offsetX.value / 32f).coerceIn(-12f, 12f)
+                                        rotationZ = (offsetX.value / 28f).coerceIn(-14f, 14f)
                                     }
                                     .draggable(
                                         orientation = Orientation.Horizontal,
@@ -555,30 +702,32 @@ fun PocketBookmarkViewerPage(
                                         onDragStarted = { isSwiping = true },
                                         onDragStopped = { velocity ->
                                             isSwiping = false
-                                            val swipeThreshold = 160f
-                                            val shouldSwipeLeft = offsetX.value < -swipeThreshold || velocity < -500f
-                                            val shouldSwipeRight = offsetX.value > swipeThreshold || velocity > 500f
+                                            val swipeThreshold = 140f
+                                            val shouldSwipeLeft = offsetX.value < -swipeThreshold || velocity < -400f
+                                            val shouldSwipeRight = offsetX.value > swipeThreshold || velocity > 400f
                                             scope.launch {
                                                 if (totalCards > 1 && shouldSwipeLeft) {
+                                                    val targetNext = (safeIndex + 1) % totalCards
                                                     offsetX.animateTo(
                                                         targetValue = -1200f,
                                                         animationSpec = tween(180)
                                                     )
-                                                    currentIndex = (safeIndex + 1) % totalCards
+                                                    currentIndex = targetNext
                                                     offsetX.snapTo(0f)
                                                 } else if (totalCards > 1 && shouldSwipeRight) {
+                                                    val targetPrev = if (safeIndex - 1 < 0) totalCards - 1 else safeIndex - 1
                                                     offsetX.animateTo(
                                                         targetValue = 1200f,
                                                         animationSpec = tween(180)
                                                     )
-                                                    currentIndex = if (safeIndex - 1 < 0) totalCards - 1 else safeIndex - 1
+                                                    currentIndex = targetPrev
                                                     offsetX.snapTo(0f)
                                                 } else {
                                                     offsetX.animateTo(
                                                         targetValue = 0f,
                                                         animationSpec = spring(
                                                             dampingRatio = Spring.DampingRatioMediumBouncy,
-                                                            stiffness = Spring.StiffnessLow
+                                                            stiffness = Spring.StiffnessMediumLow
                                                         )
                                                     )
                                                 }
@@ -590,118 +739,20 @@ fun PocketBookmarkViewerPage(
                                     }
                                     .testTag("deck_front_card_$safeIndex")
                             ) {
-                                if (currentItem != null && currentMediaPath.isNotBlank()) {
-                                    val isCurrentVideo = remember(currentItem, currentMediaPath) {
-                                        currentItem.isVideo ||
-                                                currentMediaPath.endsWith(".mp4", ignoreCase = true) ||
-                                                currentMediaPath.endsWith(".webm", ignoreCase = true) ||
-                                                currentMediaPath.endsWith(".mov", ignoreCase = true) ||
-                                                currentMediaPath.contains(".m3u8", ignoreCase = true)
-                                    }
-
-                                    Box(
-                                        modifier = Modifier
-                                            .fillMaxSize()
-                                            .padding(14.dp),
-                                        contentAlignment = Alignment.Center
-                                    ) {
-                                        if (isCurrentVideo) {
-                                            BookmarkDeckVideoPlayer(
-                                                uri = currentMediaPath,
-                                                isPlaying = !isSwiping && fullScreenMediaIndex == null,
-                                                isMuted = isDeckVideoMuted,
-                                                onToggleMute = { isDeckVideoMuted = !isDeckVideoMuted },
-                                                isDark = isDark,
-                                                modifier = Modifier
-                                                    .fillMaxSize()
-                                                    .clip(RoundedCornerShape(22.dp))
-                                            )
-                                        } else {
-                                            AsyncImage(
-                                                model = ImageRequest.Builder(context)
-                                                    .data(currentMediaPath)
-                                                    .crossfade(true)
-                                                    .build(),
-                                                contentDescription = currentItem.title.ifBlank { "Media $safeIndex" },
-                                                contentScale = ContentScale.Fit,
-                                                modifier = Modifier
-                                                    .fillMaxSize()
-                                                    .clip(RoundedCornerShape(22.dp))
-                                            )
-                                        }
-                                    }
-                                } else {
-                                    Box(
-                                        modifier = Modifier
-                                            .fillMaxSize()
-                                            .padding(20.dp),
-                                        contentAlignment = Alignment.Center
-                                    ) {
-                                        Column(
-                                            horizontalAlignment = Alignment.CenterHorizontally,
-                                            verticalArrangement = Arrangement.Center
-                                        ) {
-                                            if (faviconUrl.isNotBlank()) {
-                                                Surface(
-                                                    shape = RoundedCornerShape(18.dp),
-                                                    color = PocketThemeColors.faviconSurface(isDark),
-                                                    shadowElevation = 3.dp,
-                                                    modifier = Modifier.size(56.dp)
-                                                ) {
-                                                    Box(contentAlignment = Alignment.Center) {
-                                                        AsyncImage(
-                                                            model = ImageRequest.Builder(context)
-                                                                .data(faviconUrl)
-                                                                .crossfade(true)
-                                                                .build(),
-                                                            contentDescription = stack.sourceDomain,
-                                                            modifier = Modifier.size(36.dp)
-                                                        )
-                                                    }
-                                                }
-                                            } else {
-                                                Icon(
-                                                    imageVector = Icons.Default.Bookmark,
-                                                    contentDescription = null,
-                                                    tint = textColor,
-                                                    modifier = Modifier.size(48.dp)
-                                                )
-                                            }
-                                            Spacer(Modifier.height(10.dp))
-                                            Text(
-                                                text = stack.sourceDomain.ifBlank { "Bookmark Preview" },
-                                                style = MaterialTheme.typography.titleMedium,
-                                                fontWeight = FontWeight.Bold,
-                                                color = textColor
-                                            )
-                                        }
-                                    }
-                                }
+                                BookmarkDeckCardContent(
+                                    item = currentItem,
+                                    stack = stack,
+                                    faviconUrl = faviconUrl,
+                                    textColor = textColor,
+                                    isDark = isDark,
+                                    isFront = true,
+                                    isPlayingVideo = !isSwiping && fullScreenMediaIndex == null,
+                                    isDeckVideoMuted = isDeckVideoMuted,
+                                    onToggleMute = { isDeckVideoMuted = !isDeckVideoMuted },
+                                    modifier = Modifier.fillMaxSize()
+                                )
                             }
                         }
-                    }
-                }
-
-                // Card counter pill indicator (e.g. "2 / 5") from design
-                if (totalCards > 1) {
-                    Surface(
-                        shape = CircleShape,
-                        color = if (isDark) Color(0xFF26242C) else Color(0xFFEDE8F0),
-                        border = BorderStroke(0.5.dp, if (isDark) dividerCol.copy(alpha = 0.4f) else Color(0xFFDAD5DF)),
-                        modifier = Modifier
-                            .padding(bottom = 8.dp)
-                            .testTag("bookmark_deck_counter_badge")
-                    ) {
-                        Text(
-                            text = "${safeIndex + 1} / $totalCards",
-                            style = MaterialTheme.typography.labelMedium.copy(
-                                fontWeight = FontWeight.Medium,
-                                fontSize = 13.sp,
-                                letterSpacing = 0.5.sp
-                            ),
-                            color = textColor,
-                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp)
-                        )
                     }
                 }
             }
@@ -1157,3 +1208,167 @@ fun PocketBookmarkViewerPage(
         }
     }
 }
+
+/**
+ * Renders the visible card content for any layer in the Bookmark deck stack (front card or peeking background cards).
+ * For images: displays full preview with crossfade.
+ * For videos: displays active player if front card, or video thumbnail frame with soft play indicator if background card.
+ * For link bookmarks: displays clear favicon and domain fallback.
+ */
+@Composable
+private fun BookmarkDeckCardContent(
+    item: MediaInboxItem?,
+    stack: MediaInboxStack,
+    faviconUrl: String,
+    textColor: Color,
+    isDark: Boolean,
+    isFront: Boolean,
+    isPlayingVideo: Boolean,
+    isDeckVideoMuted: Boolean,
+    onToggleMute: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val context = LocalContext.current
+    val currentMediaPath = remember(item) {
+        if (item?.localUri?.isNotBlank() == true) {
+            val f = File(item.localUri.removePrefix("file://"))
+            if (f.exists()) f.absolutePath else item.sourceUrl
+        } else item?.sourceUrl ?: ""
+    }
+
+    if (item != null && currentMediaPath.isNotBlank()) {
+        val isCurrentVideo = remember(item, currentMediaPath) {
+            item.isVideo ||
+                    currentMediaPath.endsWith(".mp4", ignoreCase = true) ||
+                    currentMediaPath.endsWith(".webm", ignoreCase = true) ||
+                    currentMediaPath.endsWith(".mov", ignoreCase = true) ||
+                    currentMediaPath.contains(".m3u8", ignoreCase = true)
+        }
+
+        Box(
+            modifier = modifier
+                .fillMaxSize()
+                .padding(14.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            // Soft blurred ambient backdrop inside the deck card container
+            AsyncImage(
+                model = ImageRequest.Builder(context)
+                    .data(currentMediaPath)
+                    .crossfade(true)
+                    .build(),
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .clip(RoundedCornerShape(22.dp))
+                    .blur(24.dp)
+                    .graphicsLayer {
+                        alpha = if (isDark) 0.35f else 0.25f
+                    }
+            )
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .clip(RoundedCornerShape(22.dp))
+                    .background(
+                        if (isDark) Color.Black.copy(alpha = 0.35f)
+                        else Color.White.copy(alpha = 0.30f)
+                    )
+            )
+
+            if (isCurrentVideo && isFront) {
+                BookmarkDeckVideoPlayer(
+                    uri = currentMediaPath,
+                    isPlaying = isPlayingVideo,
+                    isMuted = isDeckVideoMuted,
+                    onToggleMute = onToggleMute,
+                    isDark = isDark,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .clip(RoundedCornerShape(22.dp))
+                )
+            } else {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .clip(RoundedCornerShape(22.dp)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    AsyncImage(
+                        model = ImageRequest.Builder(context)
+                            .data(currentMediaPath)
+                            .crossfade(true)
+                            .build(),
+                        contentDescription = item.title.ifBlank { "Media" },
+                        contentScale = ContentScale.Fit,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                    if (isCurrentVideo) {
+                        Surface(
+                            shape = CircleShape,
+                            color = Color.Black.copy(alpha = 0.55f),
+                            modifier = Modifier.size(44.dp)
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Icon(
+                                    imageVector = Icons.Default.PlayArrow,
+                                    contentDescription = "Video preview",
+                                    tint = Color.White,
+                                    modifier = Modifier.size(26.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    } else {
+        Box(
+            modifier = modifier
+                .fillMaxSize()
+                .padding(20.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center
+            ) {
+                if (faviconUrl.isNotBlank()) {
+                    Surface(
+                        shape = RoundedCornerShape(18.dp),
+                        color = PocketThemeColors.faviconSurface(isDark),
+                        shadowElevation = 3.dp,
+                        modifier = Modifier.size(56.dp)
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            AsyncImage(
+                                model = ImageRequest.Builder(context)
+                                    .data(faviconUrl)
+                                    .crossfade(true)
+                                    .build(),
+                                contentDescription = stack.sourceDomain,
+                                modifier = Modifier.size(36.dp)
+                            )
+                        }
+                    }
+                } else {
+                    Icon(
+                        imageVector = Icons.Default.Bookmark,
+                        contentDescription = null,
+                        tint = textColor,
+                        modifier = Modifier.size(48.dp)
+                    )
+                }
+                Spacer(Modifier.height(10.dp))
+                Text(
+                    text = stack.sourceDomain.ifBlank { "Bookmark Preview" },
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = textColor
+                )
+            }
+        }
+    }
+}
+
