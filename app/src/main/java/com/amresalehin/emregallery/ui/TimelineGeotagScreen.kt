@@ -486,7 +486,7 @@ private fun ImageSourceCard(
                         )
                     )
                     Text(
-                        text = "Pick camera folder, album, or all photos",
+                        text = "Pick camera folder, album, or all folders",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -517,7 +517,7 @@ private fun ImageSourceCard(
                 FilterChip(
                     selected = sourceType == GeotagSourceType.ALL_GALLERY_PHOTOS,
                     onClick = onSelectAllPhotos,
-                    label = { Text("All Photos") },
+                    label = { Text("All Folders") },
                     leadingIcon = { Icon(Icons.Default.Collections, contentDescription = null, modifier = Modifier.size(16.dp)) },
                     modifier = Modifier.weight(1f).testTag("source_all_photos_chip")
                 )
@@ -539,7 +539,7 @@ private fun ImageSourceCard(
                         val label = when (sourceType) {
                             GeotagSourceType.DIRECTORY_PICKER -> selectedDirName ?: "No directory picked yet"
                             GeotagSourceType.DEVICE_ALBUM -> selectedAlbumName?.let { "Album: $it" } ?: "Select an album"
-                            GeotagSourceType.ALL_GALLERY_PHOTOS -> "All unarchived gallery photos"
+                            GeotagSourceType.ALL_GALLERY_PHOTOS -> "All Folders (all unarchived gallery photos)"
                         }
                         Text(
                             text = label,

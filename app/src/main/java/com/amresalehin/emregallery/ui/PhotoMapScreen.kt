@@ -319,7 +319,10 @@ fun PhotoMapScreen(
                     }
                 },
                 onFitAllPhotos = onFitAllPhotos,
-                onGeotag = onGeotag
+                includeTimelineGeotags = uiState.includeTimelineGeotags,
+                onToggleTimelineGeotags = {
+                    viewModel.toggleIncludeTimelineGeotags()
+                }
             )
 
             PhotoMapViewContainer(

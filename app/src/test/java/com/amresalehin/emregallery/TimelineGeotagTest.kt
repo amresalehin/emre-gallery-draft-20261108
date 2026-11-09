@@ -793,4 +793,34 @@ class TimelineGeotagTest {
 
         testFile.delete()
     }
+
+    @Test
+    fun `test GeotagPreferencesManager defaults to All Folders`() {
+        val context = androidx.test.core.app.ApplicationProvider.getApplicationContext<android.content.Context>()
+        val prefs = com.amresalehin.emregallery.data.preferences.GeotagPreferencesManager(context)
+        assertTrue("Geotimeline preferences must default to All Folders", prefs.isAllFoldersSync())
+        assertTrue("Geotimeline preferences selectedFolders must default to empty", prefs.getSelectedFoldersSync().isEmpty())
+    }
+
+    @Test
+    fun `test saved timeline filename in GeotagPreferencesManager`() {
+        val context = androidx.test.core.app.ApplicationProvider.getApplicationContext<android.content.Context>()
+        val prefs = com.amresalehin.emregallery.data.preferences.GeotagPreferencesManager(context)
+        assertNull(prefs.getSavedTimelineFileName())
+        prefs.setSavedTimelineFileName("MyTakeout.json")
+        assertEquals("MyTakeout.json", prefs.getSavedTimelineFileName())
+        prefs.setSavedTimelineFileName(null)
+        assertNull(prefs.getSavedTimelineFileName())
+    }
+
+    @Test
+    fun `test PhotoMapViewModel timeline geotag toggle`() {
+        val app = androidx.test.core.app.ApplicationProvider.getApplicationContext<android.app.Application>()
+        val vm = com.amresalehin.emregallery.ui.PhotoMapViewModel(app)
+        assertFalse("By default timeline geotags should be excluded", vm.uiState.value.includeTimelineGeotags)
+        vm.toggleIncludeTimelineGeotags()
+        assertTrue("First tap should include timeline geotags", vm.uiState.value.includeTimelineGeotags)
+        vm.toggleIncludeTimelineGeotags()
+        assertFalse("Second tap should exclude timeline geotags again", vm.uiState.value.includeTimelineGeotags)
+    }
 }

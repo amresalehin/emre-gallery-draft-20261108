@@ -84,7 +84,8 @@ fun PhotoMapTopBar(
     onDismissLayerMenu: () -> Unit,
     onSelectLayer: (String) -> Unit,
     onFitAllPhotos: () -> Unit,
-    onGeotag: (() -> Unit)? = null,
+    includeTimelineGeotags: Boolean = false,
+    onToggleTimelineGeotags: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     Row(
@@ -147,20 +148,21 @@ fun PhotoMapTopBar(
             }
         }
 
-        if (onGeotag != null) {
+        if (onToggleTimelineGeotags != null) {
             Spacer(Modifier.width(8.dp))
             Surface(
-                onClick = onGeotag,
+                onClick = onToggleTimelineGeotags,
                 shape = CircleShape,
-                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f),
+                color = if (includeTimelineGeotags) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f),
+                border = if (includeTimelineGeotags) BorderStroke(1.5.dp, MaterialTheme.colorScheme.primary) else null,
                 modifier = Modifier.size(38.dp).testTag("photo_map_geotag_button")
             ) {
                 Box(contentAlignment = Alignment.Center) {
                     Icon(
                         Icons.Default.AddLocationAlt,
-                        contentDescription = "Geotag with Google Timeline",
+                        contentDescription = if (includeTimelineGeotags) "Exclude Timeline geotags" else "Include Timeline geotags",
                         modifier = Modifier.size(18.dp),
-                        tint = MaterialTheme.colorScheme.onSurface
+                        tint = if (includeTimelineGeotags) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface
                     )
                 }
             }

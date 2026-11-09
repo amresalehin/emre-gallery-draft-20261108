@@ -18,7 +18,8 @@ data class PhotoMapUiState(
     val scanTotal: Int = 0,
     val mapLayer: String = "Standard",
     val showMapLayerMenu: Boolean = false,
-    val visibleBounds: BoundingBox? = null
+    val visibleBounds: BoundingBox? = null,
+    val includeTimelineGeotags: Boolean = false
 ) {
     /**
      * Photos currently within the active visible map viewport bounds.

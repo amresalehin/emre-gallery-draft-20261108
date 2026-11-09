@@ -174,52 +174,32 @@ class SettingsScreenCardsTest {
     }
 
     @Test
-    fun testGeoTimelineMultiSelectPillsTapToSelectAndUnselect() {
-        var isAllFolders = true
-        var selectedFolders = setOf<String>()
+    fun testGeoTimelineKeepAllSelectedByDefaultAndSelectAllCheckbox() {
         val allAvailableFolders = listOf("DCIM/Camera", "Pictures/Screenshots", "Download")
+        // By default, all folders are kept in selected state
+        var selectedFolders = allAvailableFolders.toSet()
+        val isAllSelected: () -> Boolean = { selectedFolders.containsAll(allAvailableFolders) }
 
-        fun onToggleFolder(folderPath: String) {
-            if (isAllFolders) {
-                isAllFolders = false
-                selectedFolders = setOf(folderPath)
-            } else {
-                val next = if (folderPath in selectedFolders) {
-                    selectedFolders - folderPath
-                } else {
-                    selectedFolders + folderPath
-                }
-                if (next.isEmpty() || next.size >= allAvailableFolders.size) {
-                    isAllFolders = true
-                    selectedFolders = emptySet()
-                } else {
-                    selectedFolders = next
-                }
-            }
-        }
+        assertTrue(isAllSelected())
+        assertEquals(3, selectedFolders.size)
 
-        // Initially All
-        assertTrue(isAllFolders)
-        assertTrue(selectedFolders.isEmpty())
+        // User unselects Camera
+        selectedFolders = selectedFolders - "DCIM/Camera"
+        assertFalse(isAllSelected())
+        assertEquals(setOf("Pictures/Screenshots", "Download"), selectedFolders)
 
-        // Tap Camera -> selected
-        onToggleFolder("DCIM/Camera")
-        assertFalse(isAllFolders)
-        assertEquals(setOf("DCIM/Camera"), selectedFolders)
+        // User unselects another folder
+        selectedFolders = selectedFolders - "Pictures/Screenshots"
+        assertEquals(setOf("Download"), selectedFolders)
 
-        // Tap Screenshots -> multiple selection allowed
-        onToggleFolder("Pictures/Screenshots")
-        assertFalse(isAllFolders)
-        assertEquals(setOf("DCIM/Camera", "Pictures/Screenshots"), selectedFolders)
+        // User toggles "Select all" checkbox when not all selected -> selects all again
+        selectedFolders = allAvailableFolders.toSet()
+        assertTrue(isAllSelected())
+        assertEquals(allAvailableFolders.toSet(), selectedFolders)
 
-        // Tap Camera again -> unselects Camera
-        onToggleFolder("DCIM/Camera")
-        assertFalse(isAllFolders)
-        assertEquals(setOf("Pictures/Screenshots"), selectedFolders)
-
-        // Tap Screenshots again -> becomes empty, reverts to All Folders
-        onToggleFolder("Pictures/Screenshots")
-        assertTrue(isAllFolders)
+        // User toggles "Select all" checkbox when all selected -> unselects all
+        selectedFolders = emptySet()
+        assertFalse(isAllSelected())
         assertTrue(selectedFolders.isEmpty())
     }
 }

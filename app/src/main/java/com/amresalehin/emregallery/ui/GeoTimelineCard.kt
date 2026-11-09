@@ -80,14 +80,14 @@ fun GeoTimelineCard(
     var isExpanded by remember { mutableStateOf(initiallyExpanded) }
 
     val geotagPrefs = remember { com.amresalehin.emregallery.data.preferences.GeotagPreferencesManager(context) }
-    val prefWriteToExif by geotagPrefs.writeToExif.collectAsState(initial = geotagPrefs.isWriteToExifSync())
     val prefMaxGapMinutes by geotagPrefs.maxInterpolationGapMinutes.collectAsState(initial = geotagPrefs.getMaxInterpolationGapMinutesSync())
+    val prefSelectedFolders by geotagPrefs.selectedFolders.collectAsState(initial = geotagPrefs.getSelectedFoldersSync())
 
-    // Multiple selection allowed: tap to select, tap again to unselect.
-    var isAllFolders by remember { mutableStateOf(true) }
-    var selectedFolders by remember { mutableStateOf<Set<String>>(emptySet()) }
-    var writeToExif by remember(prefWriteToExif) { mutableStateOf(prefWriteToExif) }
+    val writeToExif = false
     var maxInterpolationGapMinutes by remember(prefMaxGapMinutes) { mutableIntStateOf(prefMaxGapMinutes) }
+
+    // Persistent storage for timeline JSON file
+    val savedTimelineFile = remember { File(context.filesDir, "saved_timeline.json") }
 
     // Timeline data state
     var timelineFileName by remember { mutableStateOf<String?>(null) }
@@ -110,6 +110,29 @@ fun GeoTimelineCard(
     var geotagJob by remember { mutableStateOf<Job?>(null) }
     val runLogs = remember { mutableStateListOf<String>() }
 
+    // Auto-restore saved timeline JSON on first launch
+    LaunchedEffect(Unit) {
+        if (timelinePoints.isEmpty() && savedTimelineFile.exists() && savedTimelineFile.length() > 0) {
+            isParsingJson = true
+            val savedName = geotagPrefs.getSavedTimelineFileName() ?: "Timeline.json"
+            scope.launch(Dispatchers.IO) {
+                val parsed = runCatching {
+                    savedTimelineFile.inputStream().use { stream ->
+                        GoogleTimelineParser.parseSegmentedTimeline(stream)
+                    }
+                }.getOrNull()
+                val points = parsed?.rawPoints ?: emptyList()
+                withContext(Dispatchers.Main) {
+                    timelineFileName = savedName
+                    segmentedTimeline = parsed
+                    timelinePoints = points
+                    isParsingJson = false
+                    statusSummary = if (points.isNotEmpty()) "${points.size} points" else "0 points"
+                }
+            }
+        }
+    }
+
     // Resolved folders list: displays ONLY final folder names, matching Face card
     val resolvedFolders = remember(media, availableFolders) {
         if (availableFolders.isNotEmpty()) {
@@ -129,7 +152,23 @@ fun GeoTimelineCard(
         }
     }
 
-    // JSON file picker
+    // Folders selection: Keep all in selected state by default. User can unselect or select again.
+    val allFolderPaths = remember(resolvedFolders) { resolvedFolders.map { it.path }.toSet() }
+    var selectedFolders by remember(prefSelectedFolders, allFolderPaths) {
+        mutableStateOf(
+            if (prefSelectedFolders.isNotEmpty()) prefSelectedFolders else allFolderPaths
+        )
+    }
+
+    LaunchedEffect(allFolderPaths) {
+        if (selectedFolders.isEmpty() && allFolderPaths.isNotEmpty()) {
+            selectedFolders = allFolderPaths
+        }
+    }
+
+    val isAllSelected = resolvedFolders.isNotEmpty() && resolvedFolders.all { it.path in selectedFolders || it.name in selectedFolders }
+
+    // JSON file picker - saves the uploaded JSON to app internal storage for future sessions
     val jsonPicker = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument()
     ) { uri: Uri? ->
@@ -138,9 +177,24 @@ fun GeoTimelineCard(
             statusSummary = null
             scope.launch(Dispatchers.IO) {
                 val name = queryDisplayName(context.contentResolver, uri) ?: "Timeline.json"
+                runCatching {
+                    context.contentResolver.openInputStream(uri)?.use { input ->
+                        savedTimelineFile.outputStream().use { output ->
+                            input.copyTo(output)
+                        }
+                    }
+                    geotagPrefs.setSavedTimelineFileName(name)
+                }
+
                 val parsed = runCatching {
-                    context.contentResolver.openInputStream(uri)?.use { stream ->
-                        GoogleTimelineParser.parseSegmentedTimeline(stream)
+                    if (savedTimelineFile.exists() && savedTimelineFile.length() > 0) {
+                        savedTimelineFile.inputStream().use { stream ->
+                            GoogleTimelineParser.parseSegmentedTimeline(stream)
+                        }
+                    } else {
+                        context.contentResolver.openInputStream(uri)?.use { stream ->
+                            GoogleTimelineParser.parseSegmentedTimeline(stream)
+                        }
                     }
                 }.getOrNull()
 
@@ -179,10 +233,10 @@ fun GeoTimelineCard(
 
         val startTimeStr = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date())
         runLogs.add("=== Geo Timeline Batch Run Started at $startTimeStr ===")
-        runLogs.add("Write to EXIF: $writeToExif | Max Gap: ${maxInterpolationGapMinutes}m | Scope: ${if (isAllFolders) "All Folders" else selectedFolders.joinToString()}")
+        runLogs.add("Write to EXIF: $writeToExif | Max Gap: ${maxInterpolationGapMinutes}m | Scope: ${if (isAllSelected) "All Folders" else selectedFolders.joinToString()}")
 
         geotagJob = scope.launch(Dispatchers.IO) {
-            val filteredMedia = if (isAllFolders || selectedFolders.isEmpty()) {
+            val filteredMedia = if (isAllSelected || selectedFolders.isEmpty() && resolvedFolders.isEmpty()) {
                 media.filter { !it.isVideo }
             } else {
                 media.filter { item ->
@@ -412,26 +466,26 @@ fun GeoTimelineCard(
                     )
                 }
 
-                // Top Corner Action Pill
+                // Top Corner Action Pill - icon only
                 Surface(
-                    shape = RoundedCornerShape(14.dp),
+                    shape = CircleShape,
                     color = when {
                         isRunning && isPaused -> MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.7f)
                         isRunning -> MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.7f)
                         isParsingJson -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)
+                        timelinePoints.isNotEmpty() -> MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.7f)
                         else -> MaterialTheme.colorScheme.surfaceContainerHigh
                     },
                     border = BorderStroke(
                         1.dp,
                         when {
                             isRunning && isPaused -> MaterialTheme.colorScheme.secondary.copy(alpha = 0.5f)
-                            isRunning || isParsingJson -> MaterialTheme.colorScheme.primary.copy(alpha = 0.5f)
+                            isRunning || isParsingJson || timelinePoints.isNotEmpty() -> MaterialTheme.colorScheme.primary.copy(alpha = 0.5f)
                             else -> MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
                         }
                     ),
                     modifier = Modifier
-                        .height(36.dp)
-                        .defaultMinSize(minWidth = 84.dp)
+                        .size(36.dp)
                         .clickable(enabled = !isParsingJson) {
                             when {
                                 isRunning -> isPaused = !isPaused
@@ -441,71 +495,49 @@ fun GeoTimelineCard(
                         }
                         .testTag("geo_timeline_header_pill")
                 ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 12.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    Box(
+                        contentAlignment = Alignment.Center,
+                        modifier = Modifier.fillMaxSize()
                     ) {
                         when {
                             isRunning -> {
                                 if (isPaused) {
                                     Icon(
                                         imageVector = Icons.Default.PlayArrow,
-                                        contentDescription = null,
+                                        contentDescription = "Resume",
                                         tint = MaterialTheme.colorScheme.secondary,
-                                        modifier = Modifier.size(14.dp)
-                                    )
-                                    Text(
-                                        text = "${(progressFraction * 100).toInt()}% · Resume",
-                                        style = MaterialTheme.typography.labelMedium,
-                                        fontWeight = FontWeight.SemiBold,
-                                        color = MaterialTheme.colorScheme.secondary
+                                        modifier = Modifier.size(18.dp)
                                     )
                                 } else {
                                     CircularProgressIndicator(
                                         progress = { progressFraction },
-                                        modifier = Modifier.size(13.dp),
-                                        strokeWidth = 2.dp,
-                                        color = MaterialTheme.colorScheme.primary
-                                    )
-                                    Text(
-                                        text = "${(progressFraction * 100).toInt()}%",
-                                        style = MaterialTheme.typography.labelMedium,
-                                        fontWeight = FontWeight.SemiBold,
+                                        modifier = Modifier.size(18.dp),
+                                        strokeWidth = 2.5.dp,
                                         color = MaterialTheme.colorScheme.primary
                                     )
                                 }
                             }
                             isParsingJson -> {
                                 CircularProgressIndicator(
-                                    modifier = Modifier.size(13.dp),
-                                    strokeWidth = 2.dp,
+                                    modifier = Modifier.size(18.dp),
+                                    strokeWidth = 2.5.dp,
                                     color = MaterialTheme.colorScheme.primary
                                 )
-                                Text(
-                                    text = "Loading",
-                                    style = MaterialTheme.typography.labelMedium,
-                                    fontWeight = FontWeight.Medium,
-                                    color = MaterialTheme.colorScheme.onSurface
+                            }
+                            timelinePoints.isNotEmpty() -> {
+                                Icon(
+                                    imageVector = Icons.Default.PlayArrow,
+                                    contentDescription = "Start Geotag",
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(18.dp)
                                 )
                             }
                             else -> {
-                                Box(
-                                    modifier = Modifier
-                                        .size(7.dp)
-                                        .clip(CircleShape)
-                                        .background(
-                                            if (timelinePoints.isNotEmpty()) MaterialTheme.colorScheme.primary
-                                            else MaterialTheme.colorScheme.outline
-                                        )
-                                )
-                                Text(
-                                    text = statusSummary ?: if (timelinePoints.isEmpty()) "Select timeline" else "Ready",
-                                    style = MaterialTheme.typography.labelMedium,
-                                    fontWeight = FontWeight.SemiBold,
-                                    color = MaterialTheme.colorScheme.onSurface,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
+                                Icon(
+                                    imageVector = Icons.Default.UploadFile,
+                                    contentDescription = "Upload timeline JSON",
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.size(18.dp)
                                 )
                             }
                         }
@@ -560,42 +592,44 @@ fun GeoTimelineCard(
                             )
                         }
 
-                        // "All folders" toggle pill
-                        Surface(
-                            shape = RoundedCornerShape(16.dp),
-                            color = if (isAllFolders) Color(0xFF161A20) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
-                            border = BorderStroke(
-                                1.dp,
-                                if (isAllFolders) Color(0xFF161A20) else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f)
-                            ),
+                        // Select all checkbox
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
                             modifier = Modifier
-                                .height(36.dp)
+                                .clip(RoundedCornerShape(8.dp))
                                 .clickable {
-                                    isAllFolders = true
-                                    selectedFolders = emptySet()
+                                    val newSelected = if (isAllSelected) emptySet() else resolvedFolders.map { it.path }.toSet()
+                                    selectedFolders = newSelected
+                                    scope.launch { geotagPrefs.setSelectedFolders(newSelected) }
                                 }
-                                .testTag("geo_timeline_folders_all_pill")
+                                .padding(vertical = 4.dp, horizontal = 4.dp)
+                                .testTag("geo_timeline_select_all_checkbox_row")
                         ) {
-                            Box(
-                                contentAlignment = Alignment.Center,
-                                modifier = Modifier.padding(horizontal = 14.dp)
-                            ) {
-                                Text(
-                                    text = "All folders",
-                                    style = MaterialTheme.typography.bodySmall.copy(
-                                        fontSize = 13.sp,
-                                        fontWeight = if (isAllFolders) FontWeight.SemiBold else FontWeight.Normal,
-                                        color = if (isAllFolders) Color.White else MaterialTheme.colorScheme.onSurface
-                                    )
+                            Text(
+                                text = "Select all",
+                                style = MaterialTheme.typography.bodySmall.copy(
+                                    fontSize = 13.sp,
+                                    fontWeight = if (isAllSelected) FontWeight.SemiBold else FontWeight.Normal,
+                                    color = MaterialTheme.colorScheme.onSurface
                                 )
-                            }
+                            )
+                            Spacer(Modifier.width(4.dp))
+                            Checkbox(
+                                checked = isAllSelected,
+                                onCheckedChange = { checked ->
+                                    val newSelected = if (checked) resolvedFolders.map { it.path }.toSet() else emptySet()
+                                    selectedFolders = newSelected
+                                    scope.launch { geotagPrefs.setSelectedFolders(newSelected) }
+                                },
+                                modifier = Modifier.size(24.dp).testTag("geo_timeline_select_all_checkbox")
+                            )
                         }
                     }
 
                     Spacer(Modifier.height(8.dp))
 
                     // Horizontally scrollable row of device folders showing ONLY final folder names.
-                    // Multiple selection allowed: tap to select, tap again to unselect. No pick pill.
+                    // Keep all in selected state by default; user can unselect or select again.
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -604,26 +638,19 @@ fun GeoTimelineCard(
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         resolvedFolders.forEach { folder ->
-                            val isSelected = !isAllFolders && (folder.path in selectedFolders || folder.name in selectedFolders)
+                            val isSelected = folder.path in selectedFolders || folder.name in selectedFolders
                             FolderChip(
                                 label = folder.name,
                                 isSelected = isSelected,
                                 onClick = {
-                                    if (isAllFolders) {
-                                        isAllFolders = false
-                                        selectedFolders = setOf(folder.path)
+                                    val newSet = if (isSelected) {
+                                        selectedFolders - folder.path - folder.name
                                     } else {
-                                        val newSet = if (folder.path in selectedFolders || folder.name in selectedFolders) {
-                                            selectedFolders - folder.path - folder.name
-                                        } else {
-                                            selectedFolders + folder.path
-                                        }
-                                        if (newSet.isEmpty() || newSet.size >= resolvedFolders.size) {
-                                            isAllFolders = true
-                                            selectedFolders = emptySet()
-                                        } else {
-                                            selectedFolders = newSet
-                                        }
+                                        selectedFolders + folder.path
+                                    }
+                                    selectedFolders = newSet
+                                    scope.launch {
+                                        geotagPrefs.setSelectedFolders(newSet)
                                     }
                                 },
                                 testTag = "geo_timeline_folder_chip_${folder.name}"
@@ -717,43 +744,7 @@ fun GeoTimelineCard(
                         )
                     }
 
-                    // 4. "Write to Exif" switch row
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(bottom = 12.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Column {
-                            Text(
-                                text = "Write to Exif",
-                                style = MaterialTheme.typography.bodyMedium.copy(
-                                    fontSize = 13.5.sp,
-                                    fontWeight = FontWeight.SemiBold
-                                ),
-                                color = MaterialTheme.colorScheme.onSurface
-                            )
-                            Text(
-                                text = if (writeToExif) "Writes GPS tags directly into image files" else "Safe mode: in-app map cache only",
-                                style = MaterialTheme.typography.bodySmall.copy(
-                                    fontSize = 11.5.sp,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            )
-                        }
-
-                        Switch(
-                            checked = writeToExif,
-                            onCheckedChange = { next ->
-                                writeToExif = next
-                                scope.launch { geotagPrefs.setWriteToExif(next) }
-                            },
-                            modifier = Modifier.testTag("write_to_exif_switch")
-                        )
-                    }
-
-                    // 5. Detailed Progress Bar & Live Media Item Card
+                    // 4. Detailed Progress Bar & Live Media Item Card
                     if (isRunning || isPaused || currentLiveItem != null) {
                         Surface(
                             shape = RoundedCornerShape(18.dp),
