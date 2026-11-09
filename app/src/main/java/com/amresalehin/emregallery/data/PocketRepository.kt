@@ -12,6 +12,8 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import org.json.JSONArray
 import org.json.JSONObject
+import android.graphics.BitmapFactory
+import java.io.File
 import java.util.Locale
 
 /**
@@ -28,6 +30,215 @@ class PocketRepository(
 
     private val _bookmarks = MutableStateFlow<List<MediaInboxStack>>(emptyList())
     val bookmarks: StateFlow<List<MediaInboxStack>> = _bookmarks.asStateFlow()
+
+    private val _showSvg = MutableStateFlow(prefs.getBoolean(KEY_SHOW_SVG, false))
+    val showSvg: StateFlow<Boolean> = _showSvg.asStateFlow()
+
+    private val _showVideos = MutableStateFlow(prefs.getBoolean(KEY_SHOW_VIDEOS, true))
+    val showVideos: StateFlow<Boolean> = _showVideos.asStateFlow()
+
+    private val _showStreams = MutableStateFlow(prefs.getBoolean(KEY_SHOW_STREAMS, true))
+    val showStreams: StateFlow<Boolean> = _showStreams.asStateFlow()
+
+    private val _showPng = MutableStateFlow(prefs.getBoolean(KEY_SHOW_PNG, true))
+    val showPng: StateFlow<Boolean> = _showPng.asStateFlow()
+
+    private val _showGif = MutableStateFlow(prefs.getBoolean(KEY_SHOW_GIF, true))
+    val showGif: StateFlow<Boolean> = _showGif.asStateFlow()
+
+    private val _minWidth = MutableStateFlow(prefs.getInt(KEY_MIN_WIDTH, 0))
+    val minWidth: StateFlow<Int> = _minWidth.asStateFlow()
+
+    private val _minHeight = MutableStateFlow(prefs.getInt(KEY_MIN_HEIGHT, 0))
+    val minHeight: StateFlow<Int> = _minHeight.asStateFlow()
+
+    private val _minSizeKb = MutableStateFlow(prefs.getInt(KEY_MIN_SIZE_KB, 0))
+    val minSizeKb: StateFlow<Int> = _minSizeKb.asStateFlow()
+
+    fun setShowSvg(enabled: Boolean) {
+        _showSvg.value = enabled
+        prefs.edit().putBoolean(KEY_SHOW_SVG, enabled).apply()
+    }
+
+    fun setShowVideos(enabled: Boolean) {
+        _showVideos.value = enabled
+        prefs.edit().putBoolean(KEY_SHOW_VIDEOS, enabled).apply()
+    }
+
+    fun setShowStreams(enabled: Boolean) {
+        _showStreams.value = enabled
+        prefs.edit().putBoolean(KEY_SHOW_STREAMS, enabled).apply()
+    }
+
+    fun setShowPng(enabled: Boolean) {
+        _showPng.value = enabled
+        prefs.edit().putBoolean(KEY_SHOW_PNG, enabled).apply()
+    }
+
+    fun setShowGif(enabled: Boolean) {
+        _showGif.value = enabled
+        prefs.edit().putBoolean(KEY_SHOW_GIF, enabled).apply()
+    }
+
+    fun setMinWidth(width: Int) {
+        _minWidth.value = width
+        prefs.edit().putInt(KEY_MIN_WIDTH, width).apply()
+    }
+
+    fun setMinHeight(height: Int) {
+        _minHeight.value = height
+        prefs.edit().putInt(KEY_MIN_HEIGHT, height).apply()
+    }
+
+    fun setMinSizeKb(sizeKb: Int) {
+        _minSizeKb.value = sizeKb
+        prefs.edit().putInt(KEY_MIN_SIZE_KB, sizeKb).apply()
+    }
+
+    fun parseDimensionsFromText(text: String): Pair<Int?, Int?> {
+        if (text.isBlank()) return null to null
+        val match = Regex("""(?i)(\d{2,5})\s*([x*×_]|by)\s*(\d{2,5})""").find(text)
+        if (match != null) {
+            val w = match.groupValues[1].toIntOrNull()
+            val h = match.groupValues[3].toIntOrNull()
+            if (w != null && h != null && w > 0 && h > 0) {
+                return w to h
+            }
+        }
+        val wMatch = Regex("""(?i)[?&](?:w|width)=(\d{2,5})""").find(text)
+        val hMatch = Regex("""(?i)[?&](?:h|height)=(\d{2,5})""").find(text)
+        if (wMatch != null || hMatch != null) {
+            val w = wMatch?.groupValues?.get(1)?.toIntOrNull()
+            val h = hMatch?.groupValues?.get(1)?.toIntOrNull()
+            return w to h
+        }
+        return null to null
+    }
+
+    fun parseMediaItemDimensions(item: MediaInboxItem): Pair<Int?, Int?> {
+        val (w, h) = parseDimensionsFromText("${item.title} ${item.sourceUrl}")
+        if (w != null || h != null) {
+            return w to h
+        }
+        if (item.localUri.isNotBlank()) {
+            try {
+                val path = item.localUri.removePrefix("file://")
+                val file = File(path)
+                if (file.exists() && file.isFile) {
+                    val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                    BitmapFactory.decodeFile(file.absolutePath, options)
+                    if (options.outWidth > 0 && options.outHeight > 0) {
+                        return options.outWidth to options.outHeight
+                    }
+                }
+            } catch (_: Exception) {}
+        }
+        return null to null
+    }
+
+    fun itemMatchesDimensions(item: MediaInboxItem, minWidth: Int, minHeight: Int): Boolean {
+        if (minWidth <= 0 && minHeight <= 0) return true
+        if (item.isVideo || item.isAudio || item.isStream) return true
+        val (w, h) = parseMediaItemDimensions(item)
+        if (w != null && minWidth > 0 && w < minWidth) return false
+        if (h != null && minHeight > 0 && h < minHeight) return false
+        return true
+    }
+
+    fun itemMatchesType(
+        item: MediaInboxItem,
+        showSvg: Boolean,
+        showVideos: Boolean,
+        showStreams: Boolean,
+        showPng: Boolean,
+        showGif: Boolean
+    ): Boolean {
+        if (!showSvg && MediaClassifier.isSvg(item.sourceUrl, format = item.format)) {
+            return false
+        }
+        val isItemVideo = item.isVideo || item.format.equals("MP4", true) || item.format.equals("WEBM", true) || item.format.equals("MOV", true) || item.sourceUrl.endsWith(".mp4", true) || item.sourceUrl.endsWith(".webm", true) || item.sourceUrl.endsWith(".mov", true)
+        if (!showVideos && isItemVideo) {
+            return false
+        }
+        val isItemStream = item.isStream || item.format.equals("M3U8", true) || item.sourceUrl.contains(".m3u8", true) || item.sourceUrl.contains(".mpd", true)
+        if (!showStreams && isItemStream) {
+            return false
+        }
+        val isItemPng = item.format.equals("PNG", true) || item.sourceUrl.contains(".png", true) || item.title.contains(".png", true)
+        if (!showPng && isItemPng) {
+            return false
+        }
+        val isItemGif = item.format.equals("GIF", true) || item.sourceUrl.contains(".gif", true) || item.title.contains(".gif", true)
+        if (!showGif && isItemGif) {
+            return false
+        }
+        return true
+    }
+
+    fun itemMatchesSize(item: MediaInboxItem, minSizeKb: Int): Boolean {
+        if (minSizeKb <= 0) return true
+        val minSizeBytes = minSizeKb * 1024L
+        if (item.sizeBytes > 0L) {
+            return item.sizeBytes >= minSizeBytes
+        }
+        if (item.localUri.isNotBlank()) {
+            val f = File(item.localUri.removePrefix("file://"))
+            if (f.exists() && f.isFile && f.length() > 0L) {
+                return f.length() >= minSizeBytes
+            }
+        }
+        return true
+    }
+
+    /**
+     * Sanitizes a bookmark stack according to showSvg, media types (Videos, Streams, PNGs, GIFs),
+     * minimum dimensions (horizontal/vertical from 0 to infinity), and media size (0KB to 10MB).
+     * Any media item failing the active filters is hidden from found media.
+     * The bookmark stack itself is ALWAYS preserved.
+     */
+    fun sanitizeStack(
+        stack: MediaInboxStack,
+        showSvg: Boolean = _showSvg.value,
+        minWidth: Int = _minWidth.value,
+        minHeight: Int = _minHeight.value,
+        showVideos: Boolean = _showVideos.value,
+        showStreams: Boolean = _showStreams.value,
+        showPng: Boolean = _showPng.value,
+        showGif: Boolean = _showGif.value,
+        minSizeKb: Int = _minSizeKb.value
+    ): MediaInboxStack {
+        val filteredItems = stack.items.filter { item ->
+            val typeOk = itemMatchesType(item, showSvg, showVideos, showStreams, showPng, showGif)
+            val dimOk = itemMatchesDimensions(item, minWidth, minHeight)
+            val sizeOk = itemMatchesSize(item, minSizeKb)
+            typeOk && dimOk && sizeOk
+        }
+
+        val previewIsSvg = stack.previewImageUrl.isNotBlank() && MediaClassifier.isSvg(stack.previewImageUrl)
+        val previewDimMatch = if (stack.previewImageUrl.isNotBlank() && (minWidth > 0 || minHeight > 0)) {
+            val (pw, ph) = parseDimensionsFromText(stack.previewImageUrl)
+            (pw == null || minWidth <= 0 || pw >= minWidth) && (ph == null || minHeight <= 0 || ph >= minHeight)
+        } else true
+
+        val previewTypeMatch = if (previewIsSvg) showSvg else true
+
+        val previewValid = previewTypeMatch && previewDimMatch
+
+        val sanitizedPreview = if (previewValid && stack.previewImageUrl.isNotBlank()) {
+            stack.previewImageUrl
+        } else {
+            filteredItems.firstOrNull()?.sourceUrl ?: ""
+        }
+
+        return stack.copy(items = filteredItems, previewImageUrl = sanitizedPreview)
+    }
+
+    /**
+     * Backwards-compatible overload for sanitizeStackForSvg.
+     */
+    fun sanitizeStackForSvg(stack: MediaInboxStack, showSvg: Boolean): MediaInboxStack {
+        return sanitizeStack(stack, showSvg = showSvg)
+    }
 
     init {
         loadBookmarks()
@@ -476,6 +687,14 @@ class PocketRepository(
     companion object {
         private const val TAG = "PocketRepository"
         private const val KEY_BOOKMARKS_JSON = "pocket_bookmarks_json"
+        private const val KEY_SHOW_SVG = "pocket_filter_show_svg"
+        private const val KEY_SHOW_VIDEOS = "pocket_filter_show_videos"
+        private const val KEY_SHOW_STREAMS = "pocket_filter_show_streams"
+        private const val KEY_SHOW_PNG = "pocket_filter_show_png"
+        private const val KEY_SHOW_GIF = "pocket_filter_show_gif"
+        private const val KEY_MIN_WIDTH = "pocket_filter_min_width"
+        private const val KEY_MIN_HEIGHT = "pocket_filter_min_height"
+        private const val KEY_MIN_SIZE_KB = "pocket_filter_min_size_kb"
 
         @Volatile
         private var INSTANCE: PocketRepository? = null

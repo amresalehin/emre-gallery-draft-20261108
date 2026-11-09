@@ -347,11 +347,12 @@ class PocketBookmarkUnitTest {
             )
         )
 
-        val photoStack = MediaInboxStack(
-            id = "stack_photo",
-            title = "Sunset Photo",
+        val mixedStack = MediaInboxStack(
+            id = "stack_mixed",
+            title = "Design Resources Site",
             sourceDomain = "example.com",
-            sourceUrl = "https://example.com/sunset.jpg",
+            sourceUrl = "https://example.com/resources",
+            previewImageUrl = "https://example.com/logo.svg",
             items = listOf(
                 MediaInboxItem(
                     id = "photo_item_1",
@@ -360,30 +361,100 @@ class PocketBookmarkUnitTest {
                     sourceUrl = "https://example.com/sunset.jpg",
                     isVideo = false,
                     format = "JPG"
+                ),
+                MediaInboxItem(
+                    id = "svg_item_1",
+                    title = "logo.svg",
+                    localUri = "",
+                    sourceUrl = "https://example.com/logo.svg",
+                    isVideo = false,
+                    format = "SVG"
+                ),
+                MediaInboxItem(
+                    id = "photo_item_2",
+                    title = "banner.png",
+                    localUri = "",
+                    sourceUrl = "https://example.com/banner.png",
+                    isVideo = false,
+                    format = "PNG"
                 )
             )
         )
 
-        val allStacks = listOf(svgStack, photoStack)
-
-        // When showSvg is false (default): exclude SVG stacks
-        val filteredDefault = allStacks.filter { stack ->
-            val hasOnlySvg = stack.items.isNotEmpty() && stack.items.all {
-                MediaClassifier.isSvg(it.sourceUrl, format = it.format)
-            }
-            val previewIsSvg = stack.previewImageUrl.isNotBlank() && MediaClassifier.isSvg(stack.previewImageUrl)
-            val sourceIsSvg = stack.sourceUrl.isNotBlank() && MediaClassifier.isSvg(stack.sourceUrl)
-            !hasOnlySvg && !previewIsSvg && !sourceIsSvg
+        // When showSvg is false (default):
+        // SVG items are hidden as found media, but the bookmark and other media items are shown as is
+        val showSvgDisabled = false
+        val sanitizedMixed = if (!showSvgDisabled) {
+            val visibleItems = mixedStack.items.filterNot { MediaClassifier.isSvg(it.sourceUrl, format = it.format) }
+            val previewIsSvg = mixedStack.previewImageUrl.isNotBlank() && MediaClassifier.isSvg(mixedStack.previewImageUrl)
+            val safePreview = if (previewIsSvg) visibleItems.firstOrNull()?.sourceUrl ?: "" else mixedStack.previewImageUrl
+            mixedStack.copy(items = visibleItems, previewImageUrl = safePreview)
+        } else {
+            mixedStack
         }
-        assertEquals(1, filteredDefault.size)
-        assertEquals("stack_photo", filteredDefault.first().id)
 
-        // When showSvg is true: include all stacks including SVG
-        val showSvg = true
-        val filteredEnabled = allStacks.filter {
-            if (!showSvg) false else true
+        // Bookmark itself is preserved!
+        assertEquals("stack_mixed", sanitizedMixed.id)
+        assertEquals("Design Resources Site", sanitizedMixed.title)
+        // SVG items hidden from found media (2 remaining: sunset.jpg and banner.png)
+        assertEquals(2, sanitizedMixed.items.size)
+        assertEquals("sunset.jpg", sanitizedMixed.items[0].title)
+        assertEquals("banner.png", sanitizedMixed.items[1].title)
+        assertFalse("SVG item must not be present in found media", sanitizedMixed.items.any { MediaClassifier.isSvg(it.sourceUrl) })
+        // SVG preview image replaced with first non-SVG media
+        assertEquals("https://example.com/sunset.jpg", sanitizedMixed.previewImageUrl)
+
+        // When showSvg is true: all items including SVG are visible
+        val showSvgEnabled = true
+        val sanitizedEnabled = if (!showSvgEnabled) {
+            mixedStack.copy(items = mixedStack.items.filterNot { MediaClassifier.isSvg(it.sourceUrl, format = it.format) })
+        } else {
+            mixedStack
         }
-        assertEquals(2, filteredEnabled.size)
+        assertEquals(3, sanitizedEnabled.items.size)
+        assertTrue("SVG item must be present when showSvg is enabled", sanitizedEnabled.items.any { MediaClassifier.isSvg(it.sourceUrl) })
+    }
+
+    @Test
+    fun testSvgOnlyBookmarkPreservedAsWebBookmarkWithoutSvgMedia() {
+        val svgOnlyStack = MediaInboxStack(
+            id = "stack_svg_only",
+            title = "Vector Icon Gallery",
+            sourceDomain = "vectorgallery.org",
+            sourceUrl = "https://vectorgallery.org",
+            previewImageUrl = "https://vectorgallery.org/icon.svg",
+            items = listOf(
+                MediaInboxItem(
+                    id = "icon_1",
+                    title = "icon1.svg",
+                    localUri = "",
+                    sourceUrl = "https://vectorgallery.org/icon1.svg",
+                    isVideo = false,
+                    format = "SVG"
+                ),
+                MediaInboxItem(
+                    id = "icon_2",
+                    title = "icon2.svg",
+                    localUri = "",
+                    sourceUrl = "https://vectorgallery.org/icon2.svg",
+                    isVideo = false,
+                    format = "SVG"
+                )
+            )
+        )
+
+        val showSvg = false
+        val visibleItems = svgOnlyStack.items.filterNot { MediaClassifier.isSvg(it.sourceUrl, format = it.format) }
+        val previewIsSvg = svgOnlyStack.previewImageUrl.isNotBlank() && MediaClassifier.isSvg(svgOnlyStack.previewImageUrl)
+        val safePreview = if (previewIsSvg) visibleItems.firstOrNull()?.sourceUrl ?: "" else svgOnlyStack.previewImageUrl
+        val sanitized = svgOnlyStack.copy(items = visibleItems, previewImageUrl = safePreview)
+
+        // The bookmark must NOT be deleted or hidden!
+        assertEquals("stack_svg_only", sanitized.id)
+        assertEquals("Vector Icon Gallery", sanitized.title)
+        // Found media list is empty as if the SVG media were not present on the site
+        assertTrue("Found media must be empty when site only has SVG and showSvg is false", sanitized.items.isEmpty())
+        assertEquals("", sanitized.previewImageUrl)
     }
 
     @Test
@@ -412,6 +483,206 @@ class PocketBookmarkUnitTest {
         val zeroH = 0
         val passesZero = (zeroW <= 0 || wSmall >= zeroW) && (zeroH <= 0 || hSmall >= zeroH)
         assertTrue("Any dimensions must pass when sliders are at 0", passesZero)
+    }
+
+    @Test
+    fun testMediaDimensionsFilteredFromFoundMedia() {
+        val stack = MediaInboxStack(
+            id = "stack_dim_test",
+            title = "Photography Blog",
+            sourceDomain = "photoblog.com",
+            sourceUrl = "https://photoblog.com/post",
+            previewImageUrl = "https://photoblog.com/photo_1920x1080.jpg",
+            items = listOf(
+                MediaInboxItem(
+                    id = "item_large",
+                    title = "photo_1920x1080.jpg",
+                    localUri = "",
+                    sourceUrl = "https://photoblog.com/photo_1920x1080.jpg",
+                    isVideo = false
+                ),
+                MediaInboxItem(
+                    id = "item_medium",
+                    title = "banner_1200x400.jpg",
+                    localUri = "",
+                    sourceUrl = "https://photoblog.com/banner_1200x400.jpg",
+                    isVideo = false
+                ),
+                MediaInboxItem(
+                    id = "item_thumb",
+                    title = "thumb_300x200.jpg",
+                    localUri = "",
+                    sourceUrl = "https://photoblog.com/thumb_300x200.jpg",
+                    isVideo = false
+                ),
+                MediaInboxItem(
+                    id = "item_avatar",
+                    title = "avatar_100x100.png",
+                    localUri = "",
+                    sourceUrl = "https://photoblog.com/avatar_100x100.png",
+                    isVideo = false
+                )
+            )
+        )
+
+        fun filterItems(items: List<MediaInboxItem>, minW: Int, minH: Int): List<MediaInboxItem> {
+            return items.filter { item ->
+                val match = Regex("""(?i)(\d{2,5})\s*([x*×_]|by)\s*(\d{2,5})""").find("${item.title} ${item.sourceUrl}")
+                val (w, h) = if (match != null) {
+                    match.groupValues[1].toIntOrNull() to match.groupValues[3].toIntOrNull()
+                } else null to null
+                val wOk = w == null || minW <= 0 || w >= minW
+                val hOk = h == null || minH <= 0 || h >= minH
+                wOk && hOk
+            }
+        }
+
+        // Test 1: minWidth = 500. Items with width < 500 (300x200 and 100x100) are hidden as found media
+        val filteredWidth500 = filterItems(stack.items, 500, 0)
+        assertEquals(2, filteredWidth500.size)
+        assertEquals("photo_1920x1080.jpg", filteredWidth500[0].title)
+        assertEquals("banner_1200x400.jpg", filteredWidth500[1].title)
+
+        // Test 2: minHeight = 500. Items with height < 500 (1200x400, 300x200, 100x100) are hidden as found media
+        val filteredHeight500 = filterItems(stack.items, 0, 500)
+        assertEquals(1, filteredHeight500.size)
+        assertEquals("photo_1920x1080.jpg", filteredHeight500[0].title)
+
+        // Test 3: minWidth = 2500 (greater than all media items). All found media hidden as if not present on site
+        val filteredWidth2500 = filterItems(stack.items, 2500, 0)
+        assertTrue("All media below 2500 width must be hidden from found media", filteredWidth2500.isEmpty())
+        // But the bookmark itself is ALWAYS preserved!
+        assertEquals("stack_dim_test", stack.id)
+        assertEquals("Photography Blog", stack.title)
+    }
+
+    @Test
+    fun testMediaSizeFilterLogic() {
+        val stack = MediaInboxStack(
+            id = "stack_size_test",
+            title = "Size Filter Test",
+            sourceDomain = "example.com",
+            sourceUrl = "https://example.com/files",
+            items = listOf(
+                MediaInboxItem(
+                    id = "tiny",
+                    title = "tiny.jpg",
+                    localUri = "",
+                    sourceUrl = "https://example.com/tiny.jpg",
+                    isVideo = false,
+                    sizeBytes = 50 * 1024L // 50 KB
+                ),
+                MediaInboxItem(
+                    id = "medium",
+                    title = "medium.jpg",
+                    localUri = "",
+                    sourceUrl = "https://example.com/medium.jpg",
+                    isVideo = false,
+                    sizeBytes = 500 * 1024L // 500 KB
+                ),
+                MediaInboxItem(
+                    id = "large",
+                    title = "large.mp4",
+                    localUri = "",
+                    sourceUrl = "https://example.com/large.mp4",
+                    isVideo = true,
+                    sizeBytes = 5 * 1024 * 1024L // 5 MB
+                )
+            )
+        )
+
+        fun filterBySize(items: List<MediaInboxItem>, minSizeKb: Int): List<MediaInboxItem> {
+            val minBytes = minSizeKb * 1024L
+            return items.filter { it.sizeBytes >= minBytes }
+        }
+
+        // 1. Min size 0 KB: all items included
+        val all = filterBySize(stack.items, 0)
+        assertEquals(3, all.size)
+
+        // 2. Min size 100 KB: tiny.jpg excluded
+        val over100 = filterBySize(stack.items, 100)
+        assertEquals(2, over100.size)
+        assertEquals("medium.jpg", over100[0].title)
+        assertEquals("large.mp4", over100[1].title)
+
+        // 3. Min size 1024 KB (1 MB): tiny and medium excluded, large included
+        val over1Mb = filterBySize(stack.items, 1024)
+        assertEquals(1, over1Mb.size)
+        assertEquals("large.mp4", over1Mb[0].title)
+
+        // 4. Min size 10 MB (10240 KB): all items excluded from found media, but bookmark preserved
+        val over10Mb = filterBySize(stack.items, 10240)
+        assertTrue(over10Mb.isEmpty())
+        assertEquals("stack_size_test", stack.id)
+    }
+
+    @Test
+    fun testMediaTypePillFilters() {
+        val stack = MediaInboxStack(
+            id = "stack_types_test",
+            title = "Multi Format Media",
+            sourceDomain = "example.com",
+            sourceUrl = "https://example.com/media",
+            items = listOf(
+                MediaInboxItem(id = "svg", title = "logo.svg", localUri = "", sourceUrl = "https://example.com/logo.svg", isVideo = false, format = "SVG"),
+                MediaInboxItem(id = "vid", title = "clip.mp4", localUri = "", sourceUrl = "https://example.com/clip.mp4", isVideo = true, format = "MP4"),
+                MediaInboxItem(id = "stream", title = "live.m3u8", localUri = "", sourceUrl = "https://example.com/live.m3u8", isVideo = false, isStream = true, format = "M3U8"),
+                MediaInboxItem(id = "png", title = "graphic.png", localUri = "", sourceUrl = "https://example.com/graphic.png", isVideo = false, format = "PNG"),
+                MediaInboxItem(id = "gif", title = "animation.gif", localUri = "", sourceUrl = "https://example.com/animation.gif", isVideo = false, format = "GIF"),
+                MediaInboxItem(id = "jpg", title = "photo.jpg", localUri = "", sourceUrl = "https://example.com/photo.jpg", isVideo = false, format = "JPG")
+            )
+        )
+
+        fun filterTypes(
+            items: List<MediaInboxItem>,
+            showSvg: Boolean,
+            showVideos: Boolean,
+            showStreams: Boolean,
+            showPng: Boolean,
+            showGif: Boolean
+        ): List<MediaInboxItem> {
+            return items.filter { item ->
+                if (!showSvg && MediaClassifier.isSvg(item.sourceUrl, format = item.format)) return@filter false
+                if (!showVideos && (item.isVideo || item.format.equals("MP4", true))) return@filter false
+                if (!showStreams && (item.isStream || item.format.equals("M3U8", true))) return@filter false
+                if (!showPng && item.format.equals("PNG", true)) return@filter false
+                if (!showGif && item.format.equals("GIF", true)) return@filter false
+                true
+            }
+        }
+
+        // Default state: showSvg = false, videos/streams/png/gif = true
+        val defaultList = filterTypes(stack.items, showSvg = false, showVideos = true, showStreams = true, showPng = true, showGif = true)
+        assertEquals(5, defaultList.size)
+        assertFalse("SVG must be hidden by default", defaultList.any { it.id == "svg" })
+
+        // When videos and gifs are turned off:
+        val noVidNoGif = filterTypes(stack.items, showSvg = false, showVideos = false, showStreams = true, showPng = true, showGif = false)
+        assertEquals(3, noVidNoGif.size)
+        assertTrue(noVidNoGif.any { it.id == "stream" })
+        assertTrue(noVidNoGif.any { it.id == "png" })
+        assertTrue(noVidNoGif.any { it.id == "jpg" })
+
+        // When SVG is turned on:
+        val withSvg = filterTypes(stack.items, showSvg = true, showVideos = true, showStreams = true, showPng = true, showGif = true)
+        assertEquals(6, withSvg.size)
+        assertTrue(withSvg.any { it.id == "svg" })
+    }
+
+    @Test
+    fun testDimensionZeroToInfinityFormatting() {
+        fun formatDim(value: Int): String = when {
+            value <= 0 -> "0 px (Any)"
+            value >= 4000 -> "4000+ px (∞)"
+            else -> "$value px"
+        }
+
+        assertEquals("0 px (Any)", formatDim(0))
+        assertEquals("1080 px", formatDim(1080))
+        assertEquals("1920 px", formatDim(1920))
+        assertEquals("4000+ px (∞)", formatDim(4000))
+        assertEquals("4000+ px (∞)", formatDim(5000))
     }
 }
 

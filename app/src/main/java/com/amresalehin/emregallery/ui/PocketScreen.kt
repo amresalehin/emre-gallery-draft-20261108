@@ -13,6 +13,7 @@ import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.foundation.background
@@ -49,6 +50,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.IntOffset
 import kotlin.math.abs
 import kotlin.math.roundToInt
@@ -212,9 +214,14 @@ fun PocketScreen(
 
     var sortOrder by remember { mutableStateOf("Newest") } // Newest, Oldest, Title, Domain
     var filterType by remember { mutableStateOf("All") } // All, Web Links, Notes
-    var showSvg by remember { mutableStateOf(false) } // Show SVG pill switch (Disabled by default)
-    var minWidth by remember { mutableIntStateOf(0) }
-    var minHeight by remember { mutableIntStateOf(0) }
+    val showSvg by pocketRepo.showSvg.collectAsState()
+    val showVideos by pocketRepo.showVideos.collectAsState()
+    val showStreams by pocketRepo.showStreams.collectAsState()
+    val showPng by pocketRepo.showPng.collectAsState()
+    val showGif by pocketRepo.showGif.collectAsState()
+    val minWidth by pocketRepo.minWidth.collectAsState()
+    val minHeight by pocketRepo.minHeight.collectAsState()
+    val minSizeKb by pocketRepo.minSizeKb.collectAsState()
     var showFilterSheet by remember { mutableStateOf(false) }
 
     var showAddBookmarkDialog by remember { mutableStateOf(false) }
@@ -247,8 +254,28 @@ fun PocketScreen(
     }
 
     // Filter and sort stacks
-    val filteredStacks = remember(stacks, searchQuery, sortOrder, filterType, showSvg, minWidth, minHeight) {
-        var result = stacks.filter { stack ->
+    val filteredStacks = remember(
+        stacks, searchQuery, sortOrder, filterType,
+        showSvg, showVideos, showStreams, showPng, showGif,
+        minWidth, minHeight, minSizeKb
+    ) {
+        // When type filters, dimensions, or size are set, hide non-compliant media items from found media
+        // within the bookmark stack, displaying the bookmark itself and remaining compliant media items.
+        val sanitized = stacks.map { stack ->
+            pocketRepo.sanitizeStack(
+                stack = stack,
+                showSvg = showSvg,
+                minWidth = minWidth,
+                minHeight = minHeight,
+                showVideos = showVideos,
+                showStreams = showStreams,
+                showPng = showPng,
+                showGif = showGif,
+                minSizeKb = minSizeKb
+            )
+        }
+
+        var result = sanitized.filter { stack ->
             val matchesQuery = if (searchQuery.isBlank()) {
                 true
             } else {
@@ -264,47 +291,7 @@ fun PocketScreen(
                 else -> true
             }
 
-            // SVG filtering: Disabled by default (showSvg = false).
-            // When false, exclude stacks where the main/all content is SVG vector graphics.
-            val matchesSvg = if (!showSvg) {
-                val hasOnlySvg = stack.items.isNotEmpty() && stack.items.all {
-                    MediaClassifier.isSvg(it.sourceUrl, format = it.format)
-                }
-                val previewIsSvg = stack.previewImageUrl.isNotBlank() && MediaClassifier.isSvg(stack.previewImageUrl)
-                val sourceIsSvg = stack.sourceUrl.isNotBlank() && MediaClassifier.isSvg(stack.sourceUrl)
-                !hasOnlySvg && !previewIsSvg && !sourceIsSvg
-            } else {
-                true
-            }
-
-            // Dimension filtering: Minimum Horizontal Dimension & Minimum Vertical Dimension
-            val matchesDimensions = if (minWidth > 0 || minHeight > 0) {
-                if (stack.items.isNotEmpty()) {
-                    stack.items.any { item ->
-                        if (item.isVideo || item.isAudio || item.isStream) {
-                            true
-                        } else {
-                            val (w, h) = parseMediaItemDimensions(item)
-                            if (w != null && h != null) {
-                                (minWidth <= 0 || w >= minWidth) && (minHeight <= 0 || h >= minHeight)
-                            } else {
-                                val (pw, ph) = parseDimensionsFromText("${stack.title} ${stack.description}")
-                                if (pw != null && ph != null) {
-                                    (minWidth <= 0 || pw >= minWidth) && (minHeight <= 0 || ph >= minHeight)
-                                } else {
-                                    true
-                                }
-                            }
-                        }
-                    }
-                } else {
-                    true
-                }
-            } else {
-                true
-            }
-
-            matchesQuery && matchesFilter && matchesSvg && matchesDimensions
+            matchesQuery && matchesFilter
         }
 
         result = when (sortOrder) {
@@ -647,13 +634,23 @@ fun PocketScreen(
                 currentSort = sortOrder,
                 currentFilter = filterType,
                 showSvg = showSvg,
+                showVideos = showVideos,
+                showStreams = showStreams,
+                showPng = showPng,
+                showGif = showGif,
                 minWidth = minWidth,
                 minHeight = minHeight,
+                minSizeKb = minSizeKb,
                 onSelectSort = { sortOrder = it },
                 onSelectFilter = { filterType = it },
-                onToggleShowSvg = { showSvg = it },
-                onWidthChange = { minWidth = it },
-                onHeightChange = { minHeight = it },
+                onToggleShowSvg = { pocketRepo.setShowSvg(it) },
+                onToggleShowVideos = { pocketRepo.setShowVideos(it) },
+                onToggleShowStreams = { pocketRepo.setShowStreams(it) },
+                onToggleShowPng = { pocketRepo.setShowPng(it) },
+                onToggleShowGif = { pocketRepo.setShowGif(it) },
+                onWidthChange = { pocketRepo.setMinWidth(it) },
+                onHeightChange = { pocketRepo.setMinHeight(it) },
+                onSizeChange = { pocketRepo.setMinSizeKb(it) },
                 onDismiss = { showFilterSheet = false },
                 isDark = isDark
             )
@@ -1815,13 +1812,23 @@ fun PocketFilterBottomSheet(
     currentSort: String,
     currentFilter: String,
     showSvg: Boolean,
+    showVideos: Boolean,
+    showStreams: Boolean,
+    showPng: Boolean,
+    showGif: Boolean,
     minWidth: Int,
     minHeight: Int,
+    minSizeKb: Int,
     onSelectSort: (String) -> Unit,
     onSelectFilter: (String) -> Unit,
     onToggleShowSvg: (Boolean) -> Unit,
+    onToggleShowVideos: (Boolean) -> Unit,
+    onToggleShowStreams: (Boolean) -> Unit,
+    onToggleShowPng: (Boolean) -> Unit,
+    onToggleShowGif: (Boolean) -> Unit,
     onWidthChange: (Int) -> Unit,
     onHeightChange: (Int) -> Unit,
+    onSizeChange: (Int) -> Unit,
     onDismiss: () -> Unit,
     isDark: Boolean = MaterialTheme.colorScheme.surface.luminance() < 0.5f
 ) {
@@ -1882,7 +1889,7 @@ fun PocketFilterBottomSheet(
                 }
             }
 
-            Spacer(Modifier.height(20.dp))
+            Spacer(Modifier.height(18.dp))
 
             Text(
                 text = "Show",
@@ -1920,120 +1927,304 @@ fun PocketFilterBottomSheet(
 
             Spacer(Modifier.height(18.dp))
 
-            // Show SVG Pill Switch (Disabled by Default) - use only Icon, no text or explanation
+            // Media Type Pills in the same row as SVG for Videos, Streams and PNGs, GIFs (Icon only, no text)
             Row(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState()),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.Start
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                Surface(
-                    shape = CircleShape,
-                    color = if (showSvg) (if (isDark) Color(0xFF2E2C34) else Color(0xFFE4DFEB))
-                           else (if (isDark) Color(0xFF242424) else Color(0xFFF2F2F2)),
-                    border = BorderStroke(
-                        1.dp,
-                        if (showSvg) (if (isDark) Color(0xFF555060) else Color(0xFFC5BED0))
-                        else (if (isDark) Color(0xFF383838) else Color(0xFFE0E0E0))
-                    ),
-                    modifier = Modifier
-                        .clip(CircleShape)
-                        .clickable { onToggleShowSvg(!showSvg) }
-                        .testTag("filter_svg_pill_switch")
+                // SVG Pill Switch (Disabled by default, icon only)
+                PocketMediaFilterPill(
+                    icon = Icons.Default.Polyline,
+                    contentDesc = "SVG",
+                    checked = showSvg,
+                    onCheckedChange = onToggleShowSvg,
+                    isDark = isDark,
+                    testTag = "filter_svg_pill_switch"
+                )
+
+                // Videos Pill Switch (Icon only)
+                PocketMediaFilterPill(
+                    icon = Icons.Default.Videocam,
+                    contentDesc = "Videos",
+                    checked = showVideos,
+                    onCheckedChange = onToggleShowVideos,
+                    isDark = isDark,
+                    testTag = "filter_videos_pill_switch"
+                )
+
+                // Streams Pill Switch (Icon only)
+                PocketMediaFilterPill(
+                    icon = Icons.Default.Sensors,
+                    contentDesc = "Streams",
+                    checked = showStreams,
+                    onCheckedChange = onToggleShowStreams,
+                    isDark = isDark,
+                    testTag = "filter_streams_pill_switch"
+                )
+
+                // PNGs Pill Switch (Icon only)
+                PocketMediaFilterPill(
+                    icon = Icons.Default.Image,
+                    contentDesc = "PNG",
+                    checked = showPng,
+                    onCheckedChange = onToggleShowPng,
+                    isDark = isDark,
+                    testTag = "filter_png_pill_switch"
+                )
+
+                // GIFs Pill Switch (Icon only)
+                PocketMediaFilterPill(
+                    icon = Icons.Default.Gif,
+                    contentDesc = "GIF",
+                    checked = showGif,
+                    onCheckedChange = onToggleShowGif,
+                    isDark = isDark,
+                    testTag = "filter_gif_pill_switch"
+                )
+            }
+
+            Spacer(Modifier.height(20.dp))
+
+            // Minimum Horizontal Dimension in its own separate row with 0 to infinity and current value displayed
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("filter_min_width_section")
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
                 ) {
                     Row(
-                        modifier = Modifier.padding(start = 12.dp, end = 6.dp, top = 4.dp, bottom = 4.dp),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         Icon(
-                            imageVector = Icons.Default.Polyline,
-                            contentDescription = "SVG",
-                            tint = if (showSvg) textColor else secondaryText,
+                            imageVector = Icons.Default.SwapHoriz,
+                            contentDescription = "Minimum Horizontal Dimension",
+                            tint = if (minWidth > 0) textColor else secondaryText,
                             modifier = Modifier.size(20.dp)
                         )
-                        Switch(
-                            checked = showSvg,
-                            onCheckedChange = onToggleShowSvg,
-                            modifier = Modifier.testTag("filter_svg_switch"),
-                            colors = SwitchDefaults.colors(
-                                checkedThumbColor = if (isDark) Color(0xFF161616) else Color(0xFFFFFFFF),
-                                checkedTrackColor = if (isDark) Color(0xFFEEEEEE) else Color(0xFF202020),
-                                uncheckedThumbColor = secondaryText,
-                                uncheckedTrackColor = if (isDark) Color(0xFF323232) else Color(0xFFE0E0E0)
-                            )
+                        Text(
+                            text = "Minimum Width",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = secondaryText
+                        )
+                    }
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = if (minWidth > 0) (if (isDark) Color(0xFF2A2A2A) else Color(0xFFE8E8E8)) else Color.Transparent
+                    ) {
+                        val textDisplay = when {
+                            minWidth <= 0 -> "0 px (Any)"
+                            minWidth >= 4000 -> "4000+ px (∞)"
+                            else -> "$minWidth px"
+                        }
+                        Text(
+                            text = textDisplay,
+                            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                            color = if (minWidth > 0) textColor else secondaryText,
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
                         )
                     }
                 }
+                Slider(
+                    value = minWidth.toFloat().coerceIn(0f, 4000f),
+                    onValueChange = { onWidthChange(it.roundToInt()) },
+                    valueRange = 0f..4000f,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("filter_min_width_slider"),
+                    colors = SliderDefaults.colors(
+                        thumbColor = if (minWidth > 0) textColor else secondaryText,
+                        activeTrackColor = textColor,
+                        inactiveTrackColor = if (isDark) Color(0xFF383838) else Color(0xFFE0E0E0)
+                    )
+                )
             }
 
-            Spacer(Modifier.height(18.dp))
+            Spacer(Modifier.height(14.dp))
 
-            // Minimum Horizontal Dimension, Minimum Vertical Dimensions: just icons and slider for each in the same row
-            Row(
+            // Minimum Vertical Dimension in its own separate row with 0 to infinity and current value displayed
+            Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .testTag("filter_dimension_sliders_row"),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(16.dp)
+                    .testTag("filter_min_height_section")
             ) {
-                // Minimum Horizontal Dimension: just icon and slider
                 Row(
-                    modifier = Modifier.weight(1f),
+                    modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    horizontalArrangement = Arrangement.SpaceBetween
                 ) {
-                    Icon(
-                        imageVector = Icons.Default.SwapHoriz,
-                        contentDescription = "Minimum Horizontal Dimension",
-                        tint = if (minWidth > 0) textColor else secondaryText,
-                        modifier = Modifier.size(22.dp)
-                    )
-                    Slider(
-                        value = minWidth.toFloat(),
-                        onValueChange = { onWidthChange(it.roundToInt()) },
-                        valueRange = 0f..2000f,
-                        steps = 19,
-                        modifier = Modifier
-                            .weight(1f)
-                            .testTag("filter_min_width_slider"),
-                        colors = SliderDefaults.colors(
-                            thumbColor = if (minWidth > 0) textColor else secondaryText,
-                            activeTrackColor = textColor,
-                            inactiveTrackColor = if (isDark) Color(0xFF383838) else Color(0xFFE0E0E0)
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.SwapVert,
+                            contentDescription = "Minimum Vertical Dimension",
+                            tint = if (minHeight > 0) textColor else secondaryText,
+                            modifier = Modifier.size(20.dp)
                         )
-                    )
+                        Text(
+                            text = "Minimum Height",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = secondaryText
+                        )
+                    }
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = if (minHeight > 0) (if (isDark) Color(0xFF2A2A2A) else Color(0xFFE8E8E8)) else Color.Transparent
+                    ) {
+                        val textDisplay = when {
+                            minHeight <= 0 -> "0 px (Any)"
+                            minHeight >= 4000 -> "4000+ px (∞)"
+                            else -> "$minHeight px"
+                        }
+                        Text(
+                            text = textDisplay,
+                            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                            color = if (minHeight > 0) textColor else secondaryText,
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
+                        )
+                    }
                 }
+                Slider(
+                    value = minHeight.toFloat().coerceIn(0f, 4000f),
+                    onValueChange = { onHeightChange(it.roundToInt()) },
+                    valueRange = 0f..4000f,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("filter_min_height_slider"),
+                    colors = SliderDefaults.colors(
+                        thumbColor = if (minHeight > 0) textColor else secondaryText,
+                        activeTrackColor = textColor,
+                        inactiveTrackColor = if (isDark) Color(0xFF383838) else Color(0xFFE0E0E0)
+                    )
+                )
+            }
 
-                // Minimum Vertical Dimension: just icon and slider
+            Spacer(Modifier.height(14.dp))
+
+            // Minimum Media Size Slider (0KB to 10MB) in separate row with current size position displayed
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("filter_min_size_section")
+            ) {
                 Row(
-                    modifier = Modifier.weight(1f),
+                    modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    horizontalArrangement = Arrangement.SpaceBetween
                 ) {
-                    Icon(
-                        imageVector = Icons.Default.SwapVert,
-                        contentDescription = "Minimum Vertical Dimension",
-                        tint = if (minHeight > 0) textColor else secondaryText,
-                        modifier = Modifier.size(22.dp)
-                    )
-                    Slider(
-                        value = minHeight.toFloat(),
-                        onValueChange = { onHeightChange(it.roundToInt()) },
-                        valueRange = 0f..2000f,
-                        steps = 19,
-                        modifier = Modifier
-                            .weight(1f)
-                            .testTag("filter_min_height_slider"),
-                        colors = SliderDefaults.colors(
-                            thumbColor = if (minHeight > 0) textColor else secondaryText,
-                            activeTrackColor = textColor,
-                            inactiveTrackColor = if (isDark) Color(0xFF383838) else Color(0xFFE0E0E0)
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.FolderZip,
+                            contentDescription = "Minimum Media Size",
+                            tint = if (minSizeKb > 0) textColor else secondaryText,
+                            modifier = Modifier.size(20.dp)
                         )
-                    )
+                        Text(
+                            text = "Minimum Media Size",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = secondaryText
+                        )
+                    }
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = if (minSizeKb > 0) (if (isDark) Color(0xFF2A2A2A) else Color(0xFFE8E8E8)) else Color.Transparent
+                    ) {
+                        val sizeDisplay = when {
+                            minSizeKb <= 0 -> "0 KB (Any)"
+                            minSizeKb < 1024 -> "$minSizeKb KB"
+                            minSizeKb >= 10240 -> "10 MB"
+                            else -> "${String.format(Locale.US, "%.1f", minSizeKb / 1024f)} MB"
+                        }
+                        Text(
+                            text = sizeDisplay,
+                            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                            color = if (minSizeKb > 0) textColor else secondaryText,
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
+                        )
+                    }
                 }
+                Slider(
+                    value = minSizeKb.toFloat().coerceIn(0f, 10240f),
+                    onValueChange = { onSizeChange(it.roundToInt()) },
+                    valueRange = 0f..10240f,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("filter_min_size_slider"),
+                    colors = SliderDefaults.colors(
+                        thumbColor = if (minSizeKb > 0) textColor else secondaryText,
+                        activeTrackColor = textColor,
+                        inactiveTrackColor = if (isDark) Color(0xFF383838) else Color(0xFFE0E0E0)
+                    )
+                )
             }
 
             Spacer(Modifier.height(24.dp))
+        }
+    }
+}
+
+/**
+ * Clean, icon-only pill switch for media type filtering matching the SVG pill design.
+ * No text or explanation, strictly icon + toggle switch.
+ */
+@Composable
+fun PocketMediaFilterPill(
+    icon: ImageVector,
+    contentDesc: String,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+    isDark: Boolean,
+    testTag: String
+) {
+    Surface(
+        shape = CircleShape,
+        color = if (checked) (if (isDark) Color(0xFF2E2C34) else Color(0xFFE4DFEB))
+        else (if (isDark) Color(0xFF242424) else Color(0xFFF2F2F2)),
+        border = BorderStroke(
+            1.dp,
+            if (checked) (if (isDark) Color(0xFF555060) else Color(0xFFC5BED0))
+            else (if (isDark) Color(0xFF383838) else Color(0xFFE0E0E0))
+        ),
+        modifier = Modifier
+            .clip(CircleShape)
+            .clickable { onCheckedChange(!checked) }
+            .testTag(testTag)
+    ) {
+        Row(
+            modifier = Modifier.padding(start = 12.dp, end = 6.dp, top = 4.dp, bottom = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = contentDesc,
+                tint = if (checked) (if (isDark) Color(0xFFEDEDED) else Color(0xFF161616))
+                else (if (isDark) Color(0xFF888888) else Color(0xFF757575)),
+                modifier = Modifier.size(20.dp)
+            )
+            Switch(
+                checked = checked,
+                onCheckedChange = onCheckedChange,
+                modifier = Modifier.scale(0.85f),
+                colors = SwitchDefaults.colors(
+                    checkedThumbColor = if (isDark) Color(0xFF161616) else Color(0xFFFFFFFF),
+                    checkedTrackColor = if (isDark) Color(0xFFEEEEEE) else Color(0xFF202020),
+                    uncheckedThumbColor = if (isDark) Color(0xFF888888) else Color(0xFF757575),
+                    uncheckedTrackColor = if (isDark) Color(0xFF323232) else Color(0xFFE0E0E0)
+                )
+            )
         }
     }
 }

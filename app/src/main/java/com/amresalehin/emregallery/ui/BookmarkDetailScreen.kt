@@ -55,6 +55,7 @@ import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import coil.imageLoader
 import coil.request.ImageRequest
+import com.amresalehin.emregallery.data.MediaClassifier
 import com.amresalehin.emregallery.data.MediaInboxItem
 import com.amresalehin.emregallery.data.MediaInboxStack
 import com.amresalehin.emregallery.data.PocketRepository
@@ -84,10 +85,32 @@ fun BookmarkDetailScreen(
     val scope = rememberCoroutineScope()
     val pocketRepo = remember { PocketRepository.getInstance(context) }
     val allBookmarks by pocketRepo.bookmarks.collectAsState()
+    val showSvg by pocketRepo.showSvg.collectAsState()
+    val showVideos by pocketRepo.showVideos.collectAsState()
+    val showStreams by pocketRepo.showStreams.collectAsState()
+    val showPng by pocketRepo.showPng.collectAsState()
+    val showGif by pocketRepo.showGif.collectAsState()
+    val minWidth by pocketRepo.minWidth.collectAsState()
+    val minHeight by pocketRepo.minHeight.collectAsState()
+    val minSizeKb by pocketRepo.minSizeKb.collectAsState()
 
-    // Keep live data synced if metadata refreshes or is updated
-    val liveStack = remember(allBookmarks, stack.id) {
-        allBookmarks.find { it.id == stack.id } ?: stack
+    // Keep live data synced if metadata refreshes or is updated, and sanitize SVG, type, size, and dimension items
+    val liveStack = remember(
+        allBookmarks, stack.id, showSvg, showVideos, showStreams, showPng, showGif,
+        minWidth, minHeight, minSizeKb
+    ) {
+        val raw = allBookmarks.find { it.id == stack.id } ?: stack
+        pocketRepo.sanitizeStack(
+            stack = raw,
+            showSvg = showSvg,
+            minWidth = minWidth,
+            minHeight = minHeight,
+            showVideos = showVideos,
+            showStreams = showStreams,
+            showPng = showPng,
+            showGif = showGif,
+            minSizeKb = minSizeKb
+        )
     }
 
     var editingStack by remember { mutableStateOf<MediaInboxStack?>(null) }
@@ -232,27 +255,54 @@ fun PocketBookmarkViewerPage(
         label = "pocket_drawer_height"
     )
 
-    // Effective media items discovered from the site
-    val effectiveMediaList = remember(stack) {
-        if (stack.items.isNotEmpty()) {
-            stack.items
-        } else if (stack.previewImageUrl.isNotBlank()) {
+    val pocketRepo = remember { PocketRepository.getInstance(context) }
+    val showSvg by pocketRepo.showSvg.collectAsState()
+    val showVideos by pocketRepo.showVideos.collectAsState()
+    val showStreams by pocketRepo.showStreams.collectAsState()
+    val showPng by pocketRepo.showPng.collectAsState()
+    val showGif by pocketRepo.showGif.collectAsState()
+    val minWidth by pocketRepo.minWidth.collectAsState()
+    val minHeight by pocketRepo.minHeight.collectAsState()
+    val minSizeKb by pocketRepo.minSizeKb.collectAsState()
+    val sanitizedStack = remember(
+        stack, showSvg, showVideos, showStreams, showPng, showGif, minWidth, minHeight, minSizeKb
+    ) {
+        pocketRepo.sanitizeStack(
+            stack = stack,
+            showSvg = showSvg,
+            minWidth = minWidth,
+            minHeight = minHeight,
+            showVideos = showVideos,
+            showStreams = showStreams,
+            showPng = showPng,
+            showGif = showGif,
+            minSizeKb = minSizeKb
+        )
+    }
+
+    // Effective media items discovered from the site (hiding SVGs when showSvg is disabled, and sub-dimension media)
+    val effectiveMediaList = remember(
+        sanitizedStack, showSvg, showVideos, showStreams, showPng, showGif, minWidth, minHeight, minSizeKb
+    ) {
+        if (sanitizedStack.items.isNotEmpty()) {
+            sanitizedStack.items
+        } else if (sanitizedStack.previewImageUrl.isNotBlank() && (showSvg || !MediaClassifier.isSvg(sanitizedStack.previewImageUrl))) {
             listOf(
                 MediaInboxItem(
-                    id = "preview_${stack.id}",
-                    title = stack.title.ifBlank { "Preview" },
+                    id = "preview_${sanitizedStack.id}",
+                    title = sanitizedStack.title.ifBlank { "Preview" },
                     localUri = "",
-                    sourceUrl = stack.previewImageUrl,
+                    sourceUrl = sanitizedStack.previewImageUrl,
                     isVideo = false
                 )
             )
-        } else if (stack.sourceDomain.isNotBlank()) {
+        } else if (sanitizedStack.sourceDomain.isNotBlank()) {
             listOf(
                 MediaInboxItem(
-                    id = "icon_${stack.id}",
-                    title = stack.title.ifBlank { stack.sourceDomain },
+                    id = "icon_${sanitizedStack.id}",
+                    title = sanitizedStack.title.ifBlank { sanitizedStack.sourceDomain },
                     localUri = "",
-                    sourceUrl = "https://www.google.com/s2/favicons?domain=${stack.sourceDomain}&sz=256",
+                    sourceUrl = "https://www.google.com/s2/favicons?domain=${sanitizedStack.sourceDomain}&sz=256",
                     isVideo = false
                 )
             )
@@ -314,14 +364,14 @@ fun PocketBookmarkViewerPage(
     }
 
     // Derive tags without fabricating any information
-    val derivedTags = remember(stack, effectiveMediaList) {
+    val derivedTags = remember(sanitizedStack, effectiveMediaList) {
         val tags = mutableListOf<String>()
-        if (stack.sourceDomain.isNotBlank()) {
-            tags.add(stack.sourceDomain.removePrefix("www."))
+        if (sanitizedStack.sourceDomain.isNotBlank()) {
+            tags.add(sanitizedStack.sourceDomain.removePrefix("www."))
         }
         if (effectiveMediaList.isNotEmpty()) {
             tags.add("${effectiveMediaList.size} Media")
-        } else if (stack.sourceUrl.isNotBlank()) {
+        } else if (sanitizedStack.sourceUrl.isNotBlank()) {
             tags.add("Web Link")
         }
         if (tags.isEmpty()) {
@@ -598,7 +648,7 @@ fun PocketBookmarkViewerPage(
                                     Box(modifier = Modifier.fillMaxSize()) {
                                         BookmarkDeckCardContent(
                                             item = bottomItem,
-                                            stack = stack,
+                                            stack = sanitizedStack,
                                             faviconUrl = faviconUrl,
                                             textColor = textColor,
                                             isDark = isDark,
@@ -653,7 +703,7 @@ fun PocketBookmarkViewerPage(
                                     Box(modifier = Modifier.fillMaxSize()) {
                                         BookmarkDeckCardContent(
                                             item = nextItem,
-                                            stack = stack,
+                                            stack = sanitizedStack,
                                             faviconUrl = faviconUrl,
                                             textColor = textColor,
                                             isDark = isDark,
@@ -741,7 +791,7 @@ fun PocketBookmarkViewerPage(
                             ) {
                                 BookmarkDeckCardContent(
                                     item = currentItem,
-                                    stack = stack,
+                                    stack = sanitizedStack,
                                     faviconUrl = faviconUrl,
                                     textColor = textColor,
                                     isDark = isDark,
