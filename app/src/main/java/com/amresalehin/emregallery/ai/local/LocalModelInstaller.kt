@@ -201,26 +201,27 @@ object LocalModelInstaller {
 
         val totalBytesExpected = spec.totalExpectedBytes
 
-        if (backupDir.exists()) {
-            val installedManifest = File(modelDir, spec.manifestFileName)
-            if (installedManifest.isFile && installedManifest.length() > 0L) {
+        val promotionMarker = File(modelDir, ".install_in_progress")
+        if (promotionMarker.exists()) {
+            // BACKING_UP preserves files not moved yet; PROMOTING means the previous
+            // tree may contain new files and can be cleaned before restoring backup.
+            val phase = runCatching { promotionMarker.readText() }.getOrDefault("BACKING_UP")
+            rollbackPromotion(modelDir, stagingDir, backupDir, phase == "PROMOTING")
+        } else if (backupDir.exists()) {
+            val manifestPresent = File(modelDir, spec.manifestFileName).isFile
+            val allRequiredArtifactsPresent = spec.artifacts.filter { it.isRequired }.all { artifact ->
+                val installed = File(modelDir, artifact.relativePath)
+                installed.isFile &&
+                    installed.length() >= artifact.expectedMinBytes &&
+                    (artifact.exactBytes == null || installed.length() == artifact.exactBytes)
+            }
+            if (manifestPresent && allRequiredArtifactsPresent) {
+                // A completed prior install may only have failed to clean its stale backup.
                 backupDir.deleteRecursively()
             } else {
-                modelDir.mkdirs()
-                backupDir.listFiles()?.forEach { oldEntry ->
-                    val destination = File(modelDir, oldEntry.name)
-                    if (destination.exists()) destination.deleteRecursively()
-                    if (!oldEntry.renameTo(destination)) {
-                        if (oldEntry.isDirectory) oldEntry.copyRecursively(destination, overwrite = true)
-                        else oldEntry.copyTo(destination, overwrite = true)
-                        if (!oldEntry.deleteRecursively()) {
-                            throw IOException("Unable to restore interrupted model backup: " + oldEntry.absolutePath)
-                        }
-                    }
-                }
-                if (!backupDir.deleteRecursively()) {
-                    throw IOException("Unable to clean recovered model backup: " + backupDir.absolutePath)
-                }
+                // Also recover older interrupted installs that predate the marker.
+                // Merge backed-up originals without deleting old files that may not have moved.
+                rollbackPromotion(modelDir, stagingDir, backupDir, false)
             }
         }
 
@@ -379,9 +380,15 @@ object LocalModelInstaller {
             if (backupDir.exists()) {
                 throw IOException("An unrecovered model backup exists: " + backupDir.absolutePath)
             }
+            if (!modelDir.exists() && !modelDir.mkdirs()) {
+                throw IOException("Unable to create model directory: " + modelDir.absolutePath)
+            }
+            promotionMarker.writeText("BACKING_UP")
 
             if (modelDir.exists()) {
-                val existingFiles = modelDir.listFiles { _, name -> name != ".staging" }
+                val existingFiles = modelDir.listFiles { _, name ->
+                    name != ".staging" && name != promotionMarker.name
+                }
                 if (!existingFiles.isNullOrEmpty()) {
                     backupDir.mkdirs()
                     for (file in existingFiles) {
@@ -401,6 +408,7 @@ object LocalModelInstaller {
 
             // All original top-level files are now in backup; subsequent failures
             // can safely remove the partial promotion and restore the previous model.
+            promotionMarker.writeText("PROMOTING")
             promotionStarted = true
 
             // Move staged files into modelDir
@@ -465,6 +473,9 @@ object LocalModelInstaller {
 
             File(modelDir, spec.manifestFileName).writeText(manifest.toString(2))
             File(modelDir, "model_manifest.json").writeText(manifest.toString(2))
+            if (promotionMarker.exists() && !promotionMarker.delete()) {
+                throw IOException("Unable to remove model promotion marker after manifest commit.")
+            }
             if (backupDir.exists()) backupDir.deleteRecursively()
 
             val finalStatus = if (spec.hasRuntimeAdapter) FlorenceStatus.READY else FlorenceStatus.ASSETS_DOWNLOADED_RUNTIME_UNAVAILABLE
@@ -534,6 +545,10 @@ object LocalModelInstaller {
             if (!backupDir.deleteRecursively()) {
                 throw IOException("Unable to remove restored model backup: " + backupDir.absolutePath)
             }
+        }
+        val marker = File(modelDir, ".install_in_progress")
+        if (marker.exists() && !marker.delete()) {
+            throw IOException("Unable to remove stale model promotion marker: " + marker.absolutePath)
         }
     }
 
