@@ -237,25 +237,23 @@ object AiImageTagger {
             )
         }
 
-        // 6. Default Fallback -> Florence-2 Base
-        val isInstalled = FlorenceModelManager.isInstalled(context, "florence2")
+        // No placeholder fallback: Florence has graph validation but no text generation yet.
+        val fallbackState = FlorenceModelManager.getModelState("florence2")
         val durationMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startNs)
-        if (isInstalled) {
-            val localResult = runCatching { tagWithLocalFlorence(context, item) }.getOrNull()
-            if (localResult != null && localResult.isNotEmpty()) {
-                return@withContext AiTaggingResult(
-                    tags = localResult,
-                    engineName = "Florence-2 On-Device",
-                    durationMs = durationMs
-                )
-            }
+        val fallbackError = if (
+            fallbackState.status == FlorenceStatus.ASSETS_DOWNLOADED_RUNTIME_UNAVAILABLE ||
+            FlorenceModelManager.isInstalled(context, "florence2")
+        ) {
+            "Florence-2 model files are present, but image-to-text generation is not implemented in this app build. No tags were generated."
+        } else {
+            "No local vision model is ready. Download a supported model or configure a Cloud AI provider in Settings."
         }
         return@withContext AiTaggingResult(
             tags = emptyList(),
-            engineName = "AI Vision",
+            engineName = "AI Vision (generation unavailable)",
             durationMs = durationMs,
             isSuccess = false,
-            errorMessage = "No model ready. Please download one of the 4 local models or configure Cloud AI in Settings."
+            errorMessage = fallbackError
         )
     }
 
