@@ -447,24 +447,34 @@ fun PocketBookmarkViewerPage(
                     }
                 }
 
-                // Major Screen Area: Deck Card Stack (Strict 1:1 Aspect Ratio)
+                // Major Screen Area: Deck Card Stack (5:7 Aspect Ratio, Enlarged Dimensions)
                 Box(
                     modifier = Modifier
                         .weight(1f)
                         .fillMaxWidth()
-                        .padding(start = 20.dp, end = 20.dp, top = 12.dp, bottom = 4.dp),
+                        .padding(start = 12.dp, end = 12.dp, top = 6.dp, bottom = 4.dp),
                     contentAlignment = Alignment.Center
                 ) {
                     BoxWithConstraints(
                         modifier = Modifier.fillMaxSize(),
                         contentAlignment = Alignment.Center
                     ) {
-                        val maxDeckW = maxWidth - 24.dp
-                        val maxDeckH = maxHeight - 16.dp
-                        val deckSide = minOf(maxDeckW, maxDeckH).coerceAtLeast(180.dp)
+                        // 5:7 Aspect Ratio (width : height = 5 : 7)
+                        val targetRatio = 5f / 7f
+                        // Generous bounds so the deck card stack is visibly larger while leaving margin for peeking cards
+                        val maxDeckW = (maxWidth - 16.dp).coerceAtLeast(180.dp)
+                        val maxDeckH = (maxHeight - 14.dp).coerceAtLeast(252.dp)
+
+                        var deckWidth = maxDeckW
+                        var deckHeight = deckWidth / targetRatio
+
+                        if (deckHeight > maxDeckH) {
+                            deckHeight = maxDeckH
+                            deckWidth = deckHeight * targetRatio
+                        }
 
                         Box(
-                            modifier = Modifier.size(deckSide),
+                            modifier = Modifier.size(width = deckWidth, height = deckHeight),
                             contentAlignment = Alignment.Center
                         ) {
                             // Layer 1 (Bottom peeking card: 2 cards ahead, offset x = 18.dp, y = -12.dp, rotationZ = 6.5f)
@@ -514,7 +524,7 @@ fun PocketBookmarkViewerPage(
                                 }
                             }
 
-                            // Layer 3 (Top Front Card in Deck - Exact 1:1 Container, Interactive Swipe Gesture)
+                            // Layer 3 (Top Front Card in Deck - 5:7 Aspect Ratio Container, Interactive Swipe Gesture)
                             val currentItem = effectiveMediaList.getOrNull(safeIndex)
                             val currentMediaPath = remember(currentItem) {
                                 if (currentItem?.localUri?.isNotBlank() == true) {
