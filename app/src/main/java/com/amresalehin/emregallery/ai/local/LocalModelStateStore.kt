@@ -4,6 +4,7 @@ import android.content.Context
 import com.amresalehin.emregallery.data.FlorenceModelState
 import com.amresalehin.emregallery.data.FlorenceStatus
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -156,27 +157,28 @@ object LocalModelStateStore {
 
     suspend fun uninstall(context: Context, modelId: String): Boolean = withContext(Dispatchers.IO) {
         val spec = LocalModelRegistry.getSpec(modelId)
-        cancelDownload(context, spec.id)
-
-        val uninstalled = LocalModelInstaller.uninstall(context, spec)
-        val resetState = FlorenceModelState(
-            status = FlorenceStatus.NOT_INSTALLED,
-            progress = 0f,
-            bytesDownloaded = 0L,
-            totalBytes = spec.totalExpectedBytes,
-            installedSizeBytes = 0L,
-            installedPath = null,
-            lastUpdated = System.currentTimeMillis()
-        )
-        updateState(spec.id, resetState)
-        return@withContext uninstalled
+        // A cancelled coroutine must finish closing its file streams before any deletion.
+        activeJobs[spec.id]?.cancelAndJoin()
+        val lock = getLock(spec.id)
+        lock.withLock {
+            val uninstalled = LocalModelInstaller.uninstall(context, spec)
+            val resetState = FlorenceModelState(
+                status = FlorenceStatus.NOT_INSTALLED,
+                progress = 0f,
+                bytesDownloaded = 0L,
+                totalBytes = spec.totalExpectedBytes,
+                installedSizeBytes = 0L,
+                installedPath = null,
+                lastUpdated = System.currentTimeMillis()
+            )
+            updateState(spec.id, resetState)
+            uninstalled
+        }
     }
 
     fun cancelDownload(context: Context, modelId: String) {
         val spec = LocalModelRegistry.getSpec(modelId)
+        // Keep the job mapping until its finally block runs, avoiding a refresh race.
         activeJobs[spec.id]?.cancel()
-        activeJobs.remove(spec.id)
-        activeJobs.remove(modelId)
-        refreshAll(context)
     }
 }

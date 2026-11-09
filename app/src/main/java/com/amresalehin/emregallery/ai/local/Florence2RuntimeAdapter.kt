@@ -12,8 +12,8 @@ import java.nio.LongBuffer
 
 /**
  * Concrete ONNX Runtime adapter for Microsoft Florence-2 Base vision-language model.
- * Validates the full 4-graph pipeline (vision encoder, token embedder, text encoder, merged decoder)
- * and executes a deterministic smoke inference test.
+ * Opens all four ONNX graphs and smoke-runs the token-embedding graph.
+ * This validates graph/session compatibility; it is not end-to-end image generation.
  */
 class Florence2RuntimeAdapter(
     override val spec: LocalModelSpec = LocalModelRegistry.FLORENCE_2_SPEC
@@ -27,7 +27,6 @@ class Florence2RuntimeAdapter(
         const val DECODER_MERGED_PATH = "onnx/decoder_model_merged_quantized.onnx"
     }
 
-    private var env: OrtEnvironment? = null
     private var visionSession: OrtSession? = null
     private var embedSession: OrtSession? = null
     private var encoderSession: OrtSession? = null
@@ -50,6 +49,8 @@ class Florence2RuntimeAdapter(
         modelDir: File
     ): SmokeTestResult = withContext(Dispatchers.IO) {
         val startTime = System.currentTimeMillis()
+        closeSessions()
+        _isReady = false
 
         // 1. Structural artifact existence checks
         val visionFile = File(modelDir, VISION_ENCODER_PATH)
@@ -80,7 +81,6 @@ class Florence2RuntimeAdapter(
         // 2. Initialize ONNX Environment and sessions
         try {
             val ortEnv = OrtEnvironment.getEnvironment()
-            env = ortEnv
 
             val opts = OrtSession.SessionOptions().apply {
                 setOptimizationLevel(OrtSession.SessionOptions.OptLevel.BASIC_OPT)
@@ -113,7 +113,7 @@ class Florence2RuntimeAdapter(
             val encSess = ortEnv.createSession(encoderFile.absolutePath, opts)
             encoderSession = encSess
             val encInputNames = encSess.inputNames
-            if (!encInputNames.any { it.contains("inputs_embeds") || it.contains("input_ids") }) {
+            if (!encInputNames.any { it.contains("inputs_embeds") }) {
                 return@withContext SmokeTestResult.Failure(
                     reason = "Encoder model graph lacks expected input 'inputs_embeds'. Found: $encInputNames",
                     failedStage = "graph_signature"
@@ -124,7 +124,9 @@ class Florence2RuntimeAdapter(
             val decSess = ortEnv.createSession(decoderFile.absolutePath, opts)
             decoderSession = decSess
             val decInputNames = decSess.inputNames
-            if (!decInputNames.any { it.contains("input_ids") } || !decInputNames.any { it.contains("encoder_hidden_states") }) {
+            if (!decInputNames.any { it.contains("inputs_embeds") || it.contains("input_ids") || it.contains("decoder_input_ids") } ||
+                !decInputNames.any { it.contains("encoder_hidden_states") }
+            ) {
                 return@withContext SmokeTestResult.Failure(
                     reason = "Decoder merged graph lacks expected inputs ('input_ids', 'encoder_hidden_states'). Found: $decInputNames",
                     failedStage = "graph_signature"
@@ -141,26 +143,35 @@ class Florence2RuntimeAdapter(
             )
 
             val primaryEmbedInput = embedInputNames.first { it.contains("input_ids") }
-            val runResult = embedSess.run(mapOf(primaryEmbedInput to inputTensor))
-            val outputTensor = runResult.get(0)
-            if (outputTensor == null) {
-                return@withContext SmokeTestResult.Failure(
-                    reason = "Embed tokens smoke test produced null output tensor.",
-                    failedStage = "smoke_inference"
-                )
+            val runResult = try {
+                embedSess.run(mapOf(primaryEmbedInput to inputTensor))
+            } finally {
+                inputTensor.close()
+            }
+            try {
+                if (runResult.get(0) == null) {
+                    closeSessions()
+                    return@withContext SmokeTestResult.Failure(
+                        reason = "Embed tokens smoke test produced null output tensor.",
+                        failedStage = "smoke_inference"
+                    )
+                }
+            } finally {
+                runResult.close()
             }
 
             val elapsed = System.currentTimeMillis() - startTime
             _isReady = true
-            Log.i(TAG, "Florence-2 full pipeline successfully loaded and validated in ${elapsed}ms.")
+            Log.i(TAG, "Florence-2 graph sessions opened; embed-token smoke test passed in " + elapsed + "ms.")
 
             return@withContext SmokeTestResult.Success(
                 durationMs = elapsed,
-                details = "Florence-2 pipeline (vision, embed, encoder, decoder) validated successfully.",
-                validatedTensors = listOf("pixel_values", "input_ids", "inputs_embeds", "logits")
+                details = "All four ONNX graph sessions opened and the embed-token graph executed successfully. End-to-end image generation is not exercised by this smoke test.",
+                validatedTensors = listOf("embed_tokens.input_ids", "embed_tokens.output")
             )
 
         } catch (e: UnsatisfiedLinkError) {
+            closeSessions()
             _isReady = false
             return@withContext SmokeTestResult.Failure(
                 reason = "ONNX Runtime native libraries (.so) unavailable in this environment: ${e.message}",
@@ -168,6 +179,7 @@ class Florence2RuntimeAdapter(
                 cause = e
             )
         } catch (e: Throwable) {
+            closeSessions()
             _isReady = false
             return@withContext SmokeTestResult.Failure(
                 reason = "ONNX validation error: ${e.localizedMessage ?: e.javaClass.simpleName}",
@@ -179,15 +191,18 @@ class Florence2RuntimeAdapter(
 
     override fun close() {
         _isReady = false
+        closeSessions()
+    }
+
+    private fun closeSessions() {
         runCatching { visionSession?.close() }
         runCatching { embedSession?.close() }
         runCatching { encoderSession?.close() }
         runCatching { decoderSession?.close() }
-        runCatching { env?.close() }
         visionSession = null
         embedSession = null
         encoderSession = null
         decoderSession = null
-        env = null
+        // OrtEnvironment.getEnvironment() is process-wide; never close the shared singleton.
     }
 }

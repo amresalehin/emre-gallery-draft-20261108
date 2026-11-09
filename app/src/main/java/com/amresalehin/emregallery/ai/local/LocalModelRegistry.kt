@@ -35,7 +35,9 @@ object LocalModelRegistry {
         subdir = "models/florence2",
         manifestFileName = "florence_manifest.json",
         testTagPrefix = "florence",
-        hasRuntimeAdapter = true,
+        // The app validates ONNX graph files but does not implement Florence image
+        // preprocessing, tokenization, generation, or post-processing.
+        hasRuntimeAdapter = false,
         artifacts = listOf(
             LocalModelArtifact(
                 relativePath = "config.json",

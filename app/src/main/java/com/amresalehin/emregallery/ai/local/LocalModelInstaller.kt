@@ -82,6 +82,18 @@ object LocalModelInstaller {
                 errorMessage = "Corrupt manifest file in ${spec.displayName} directory."
             )
 
+        val manifestId = manifestJson.optString("id")
+        if (manifestId.isNotBlank() &&
+            manifestId != spec.id &&
+            manifestId != spec.canonicalId &&
+            !spec.legacyAliases.contains(manifestId)
+        ) {
+            return FlorenceModelState(
+                status = FlorenceStatus.ERROR,
+                errorMessage = "Manifest model id mismatch: expected " + spec.id + ", got " + manifestId
+            )
+        }
+
         // Verify model identity and immutable commit revision match registry
         val manifestRepo = manifestJson.optString("upstreamRepo")
         val manifestRev = manifestJson.optString("upstreamRevision")
@@ -98,28 +110,40 @@ object LocalModelInstaller {
             )
         }
 
-        // Verify all required artifacts exist and match expected minimum/exact sizes
+        // Verify required artifacts, exact sizes and configured SHA-256 checksums.
         var totalInstalledBytes = 0L
         for (artifact in spec.artifacts) {
             val file = File(modelDir, artifact.relativePath)
             if (!file.isFile) {
-                return FlorenceModelState(
-                    status = FlorenceStatus.NOT_INSTALLED,
-                    errorMessage = "Missing artifact ${artifact.relativePath}"
-                )
+                if (artifact.isRequired) {
+                    return FlorenceModelState(
+                        status = FlorenceStatus.NOT_INSTALLED,
+                        errorMessage = "Missing artifact " + artifact.relativePath
+                    )
+                }
+                continue
             }
             val len = file.length()
             if (len == 0L || len < artifact.expectedMinBytes) {
                 return FlorenceModelState(
                     status = FlorenceStatus.ERROR,
-                    errorMessage = "Artifact ${artifact.relativePath} is truncated ($len bytes)"
+                    errorMessage = "Artifact " + artifact.relativePath + " is truncated (" + len + " bytes)"
                 )
             }
             if (artifact.exactBytes != null && len != artifact.exactBytes) {
                 return FlorenceModelState(
                     status = FlorenceStatus.ERROR,
-                    errorMessage = "Artifact ${artifact.relativePath} size mismatch: expected ${artifact.exactBytes}, got $len"
+                    errorMessage = "Artifact " + artifact.relativePath + " size mismatch: expected " + artifact.exactBytes + ", got " + len
                 )
+            }
+            if (!artifact.sha256Hex.isNullOrBlank()) {
+                val actualHash = runCatching { computeSha256(file) }.getOrNull()
+                if (actualHash == null || !actualHash.equals(artifact.sha256Hex, ignoreCase = true)) {
+                    return FlorenceModelState(
+                        status = FlorenceStatus.ERROR,
+                        errorMessage = "Artifact " + artifact.relativePath + " failed SHA-256 validation."
+                    )
+                }
             }
             totalInstalledBytes += len
         }
@@ -177,19 +201,62 @@ object LocalModelInstaller {
 
         val totalBytesExpected = spec.totalExpectedBytes
 
-        // 1. Storage verification check
-        val stat = StatFs(context.filesDir.absolutePath)
-        val availableBytes = stat.availableBytes
-        val requiredBytes = totalBytesExpected + SAFETY_MARGIN_BYTES
-        if (availableBytes < requiredBytes) {
-            val neededMb = (requiredBytes - availableBytes) / (1024 * 1024)
-            throw IOException("Insufficient storage to install ${spec.displayName}. Need at least ${neededMb}MB more free disk space.")
+        if (backupDir.exists()) {
+            val installedManifest = File(modelDir, spec.manifestFileName)
+            if (installedManifest.isFile && installedManifest.length() > 0L) {
+                backupDir.deleteRecursively()
+            } else {
+                modelDir.mkdirs()
+                backupDir.listFiles()?.forEach { oldEntry ->
+                    val destination = File(modelDir, oldEntry.name)
+                    if (destination.exists()) destination.deleteRecursively()
+                    if (!oldEntry.renameTo(destination)) {
+                        if (oldEntry.isDirectory) oldEntry.copyRecursively(destination, overwrite = true)
+                        else oldEntry.copyTo(destination, overwrite = true)
+                        if (!oldEntry.deleteRecursively()) {
+                            throw IOException("Unable to restore interrupted model backup: " + oldEntry.absolutePath)
+                        }
+                    }
+                }
+                if (!backupDir.deleteRecursively()) {
+                    throw IOException("Unable to clean recovered model backup: " + backupDir.absolutePath)
+                }
+            }
         }
 
+        // Storage preflight is incremental: existing valid staged bytes are reusable.
         stagingDir.mkdirs()
+        var missingBytes = 0L
+        for (artifact in spec.artifacts) {
+            if (!artifact.isRequired) continue
+            val staged = File(stagingDir, artifact.relativePath)
+            val expected = artifact.exactBytes ?: artifact.expectedMinBytes
+            val valid = staged.isFile &&
+                staged.length() >= artifact.expectedMinBytes &&
+                (artifact.exactBytes == null || staged.length() == artifact.exactBytes) &&
+                (artifact.sha256Hex.isNullOrBlank() ||
+                    runCatching { computeSha256(staged).equals(artifact.sha256Hex, ignoreCase = true) }.getOrDefault(false))
+            if (valid) continue
+            if (staged.isFile && staged.length() >= expected) {
+                staged.delete()
+                missingBytes += expected
+            } else {
+                missingBytes += (expected - if (staged.isFile) staged.length() else 0L).coerceAtLeast(0L)
+            }
+        }
+        val availableBytes = StatFs(context.filesDir.absolutePath).availableBytes
+        val requiredBytes = missingBytes + SAFETY_MARGIN_BYTES
+        if (availableBytes < requiredBytes) {
+            val neededMb = ((requiredBytes - availableBytes) / (1024 * 1024)).coerceAtLeast(1L)
+            throw IOException("Insufficient storage to resume " + spec.displayName +
+                ". Need at least " + neededMb + "MB more free disk space.")
+        }
+
+
 
         var totalBytesDownloaded = 0L
         val downloadStartTime = System.currentTimeMillis()
+        var promotionStarted = false
 
         try {
             // 2. Download all artifacts into staging
@@ -198,7 +265,12 @@ object LocalModelInstaller {
                 stagingFile.parentFile?.mkdirs()
 
                 // Check if already completed in staging
-                if (stagingFile.isFile && artifact.exactBytes != null && stagingFile.length() == artifact.exactBytes) {
+                if (stagingFile.isFile &&
+                    stagingFile.length() >= artifact.expectedMinBytes &&
+                    (artifact.exactBytes == null || stagingFile.length() == artifact.exactBytes) &&
+                    (artifact.sha256Hex.isNullOrBlank() ||
+                        runCatching { computeSha256(stagingFile).equals(artifact.sha256Hex, ignoreCase = true) }.getOrDefault(false))
+                ) {
                     totalBytesDownloaded += stagingFile.length()
                     onProgress(
                         ModelDownloadProgress(
@@ -219,9 +291,10 @@ object LocalModelInstaller {
                     url = artifact.sourceUrl,
                     destination = stagingFile,
                     expectedBytes = artifact.exactBytes,
-                    onProgress = { chunk ->
-                        artifactBytesSoFar += chunk
-                        val currentCumulative = totalBytesDownloaded + artifactBytesSoFar
+                    expectedSha256 = artifact.sha256Hex,
+                    onProgress = { _ ->
+                        artifactBytesSoFar = stagingFile.length()
+                        val currentCumulative = totalBytesDownloaded + stagingFile.length()
                         val elapsedSec = ((System.currentTimeMillis() - downloadStartTime) / 1000.0).coerceAtLeast(0.1)
                         val speed = (currentCumulative / elapsedSec).toLong()
                         val remaining = (totalBytesExpected - currentCumulative).coerceAtLeast(0L)
@@ -264,7 +337,7 @@ object LocalModelInstaller {
                 }
 
                 // Verify cryptographic checksum if provided
-                if (artifact.sha256Hex != null) {
+                if (!artifact.sha256Hex.isNullOrBlank()) {
                     val computed = computeSha256(stagingFile)
                     if (!computed.equals(artifact.sha256Hex, ignoreCase = true)) {
                         stagingFile.delete()
@@ -289,25 +362,46 @@ object LocalModelInstaller {
 
             for (artifact in spec.artifacts) {
                 val f = File(stagingDir, artifact.relativePath)
-                if (!f.isFile || f.length() < artifact.expectedMinBytes) {
-                    throw IOException("Verification failed: artifact ${artifact.relativePath} is missing or incomplete in staging.")
+                if (!f.isFile && !artifact.isRequired) continue
+                if (!f.isFile || f.length() < artifact.expectedMinBytes ||
+                    (artifact.exactBytes != null && f.length() != artifact.exactBytes)
+                ) {
+                    throw IOException("Verification failed: artifact " + artifact.relativePath + " is missing or has an invalid size in staging.")
+                }
+                if (!artifact.sha256Hex.isNullOrBlank() &&
+                    !computeSha256(f).equals(artifact.sha256Hex, ignoreCase = true)
+                ) {
+                    throw IOException("Verification failed: SHA-256 mismatch for " + artifact.relativePath)
                 }
             }
 
             // 4. Atomic directory promotion with rollback protection
-            if (backupDir.exists()) backupDir.deleteRecursively()
+            if (backupDir.exists()) {
+                throw IOException("An unrecovered model backup exists: " + backupDir.absolutePath)
+            }
 
             if (modelDir.exists()) {
                 val existingFiles = modelDir.listFiles { _, name -> name != ".staging" }
                 if (!existingFiles.isNullOrEmpty()) {
                     backupDir.mkdirs()
                     for (file in existingFiles) {
-                        file.renameTo(File(backupDir, file.name))
+                        val backupFile = File(backupDir, file.name)
+                        if (!file.renameTo(backupFile)) {
+                            if (file.isDirectory) file.copyRecursively(backupFile, overwrite = true)
+                            else file.copyTo(backupFile, overwrite = true)
+                            if (!file.deleteRecursively()) {
+                                throw IOException("Unable to move existing model file into backup: " + file.absolutePath)
+                            }
+                        }
                     }
                 }
             } else {
                 modelDir.mkdirs()
             }
+
+            // All original top-level files are now in backup; subsequent failures
+            // can safely remove the partial promotion and restore the previous model.
+            promotionStarted = true
 
             // Move staged files into modelDir
             copyDirectoryContents(stagingDir, modelDir)
@@ -327,19 +421,12 @@ object LocalModelInstaller {
 
             val runtimeResult = LocalModelRuntimeRegistry.validateModel(context, spec, modelDir)
 
-            if (spec.hasRuntimeAdapter && runtimeResult is SmokeTestResult.Failure) {
-                // Rollback on runtime failure
+            if (runtimeResult is SmokeTestResult.Failure) {
                 Log.e(TAG, "Runtime validation failed for ${spec.displayName}: ${runtimeResult.reason}. Rolling back.")
-                modelDir.deleteRecursively()
-                if (backupDir.exists()) {
-                    backupDir.renameTo(modelDir)
-                }
                 throw IllegalStateException("Model validation failed: ${runtimeResult.reason}")
             }
 
-            // Validation succeeded! Delete backup
-            if (backupDir.exists()) backupDir.deleteRecursively()
-
+            // Preserve the old model until both new manifests are written.
             // 6. Write authoritative versioned manifest
             val statusString = if (spec.hasRuntimeAdapter) "READY" else "ASSETS_DOWNLOADED_RUNTIME_UNAVAILABLE"
             val statusDetail = when (runtimeResult) {
@@ -378,6 +465,7 @@ object LocalModelInstaller {
 
             File(modelDir, spec.manifestFileName).writeText(manifest.toString(2))
             File(modelDir, "model_manifest.json").writeText(manifest.toString(2))
+            if (backupDir.exists()) backupDir.deleteRecursively()
 
             val finalStatus = if (spec.hasRuntimeAdapter) FlorenceStatus.READY else FlorenceStatus.ASSETS_DOWNLOADED_RUNTIME_UNAVAILABLE
             return@withContext FlorenceModelState(
@@ -394,10 +482,58 @@ object LocalModelInstaller {
             )
 
         } catch (e: CancellationException) {
-            // Keep partial staging file for true resume, but don't promote
+            if (promotionStarted) {
+                runCatching { rollbackPromotion(modelDir, stagingDir, backupDir, true) }
+                    .onFailure { e.addSuppressed(it) }
+            } else if (backupDir.exists()) {
+                runCatching { rollbackPromotion(modelDir, stagingDir, backupDir, false) }
+                    .onFailure { e.addSuppressed(it) }
+            }
             throw e
         } catch (e: Throwable) {
+            if (promotionStarted) {
+                runCatching { rollbackPromotion(modelDir, stagingDir, backupDir, true) }
+                    .onFailure { e.addSuppressed(it) }
+            } else if (backupDir.exists()) {
+                runCatching { rollbackPromotion(modelDir, stagingDir, backupDir, false) }
+                    .onFailure { e.addSuppressed(it) }
+            }
             throw e
+        }
+    }
+
+    private fun rollbackPromotion(
+        modelDir: File,
+        stagingDir: File,
+        backupDir: File,
+        promotionStarted: Boolean
+    ) {
+        modelDir.mkdirs()
+        if (promotionStarted) {
+            modelDir.listFiles { _, name -> name != stagingDir.name }
+                ?.forEach { entry ->
+                    if (!entry.deleteRecursively()) {
+                        throw IOException("Unable to remove failed promoted file: " + entry.absolutePath)
+                    }
+                }
+        }
+        if (backupDir.isDirectory) {
+            backupDir.listFiles()?.forEach { oldEntry ->
+                val destination = File(modelDir, oldEntry.name)
+                if (destination.exists() && !destination.deleteRecursively()) {
+                    throw IOException("Unable to replace partial model file during rollback: " + destination.absolutePath)
+                }
+                if (!oldEntry.renameTo(destination)) {
+                    if (oldEntry.isDirectory) oldEntry.copyRecursively(destination, overwrite = true)
+                    else oldEntry.copyTo(destination, overwrite = true)
+                    if (!oldEntry.deleteRecursively()) {
+                        throw IOException("Unable to restore model backup file: " + oldEntry.absolutePath)
+                    }
+                }
+            }
+            if (!backupDir.deleteRecursively()) {
+                throw IOException("Unable to remove restored model backup: " + backupDir.absolutePath)
+            }
         }
     }
 
@@ -408,13 +544,17 @@ object LocalModelInstaller {
             if (file.isDirectory) {
                 dest.mkdirs()
                 copyDirectoryContents(file, dest)
-                file.delete()
+                if (!file.deleteRecursively()) {
+                    throw IOException("Unable to remove staged directory after promotion: " + file.absolutePath)
+                }
             } else {
                 dest.parentFile?.mkdirs()
                 if (dest.exists()) dest.delete()
                 if (!file.renameTo(dest)) {
                     file.copyTo(dest, overwrite = true)
-                    file.delete()
+                    if (!file.delete()) {
+                        throw IOException("Unable to remove staged file after promotion: " + file.absolutePath)
+                    }
                 }
             }
         }

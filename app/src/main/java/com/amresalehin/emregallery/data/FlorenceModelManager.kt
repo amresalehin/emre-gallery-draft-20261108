@@ -74,7 +74,8 @@ object FlorenceModelManager {
 
     fun getSpec(modelId: String): LocalModelSpec {
         val reg = LocalModelRegistry.getSpec(modelId)
-        return SUPPORTED_MODELS.firstOrNull { it.id == reg.id } ?: SUPPORTED_MODELS.first { it.id == "florence2" }
+        return SUPPORTED_MODELS.firstOrNull { it.id == reg.id }
+            ?: throw IllegalStateException("Registered model is missing from SUPPORTED_MODELS: " + reg.id)
     }
 
     fun getModelDir(context: Context, modelId: String = "florence2"): File {

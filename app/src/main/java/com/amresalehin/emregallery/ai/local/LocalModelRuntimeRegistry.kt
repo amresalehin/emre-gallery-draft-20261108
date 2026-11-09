@@ -14,7 +14,7 @@ object LocalModelRuntimeRegistry {
         // Register Florence-2 factory by default
         register(object : LocalModelRuntimeFactory {
             override fun isApplicable(spec: LocalModelSpec): Boolean =
-                spec.architecture == ModelArchitecture.FLORENCE2 && spec.hasRuntimeAdapter
+                spec.architecture == ModelArchitecture.FLORENCE2
 
             override fun createRuntime(spec: LocalModelSpec): LocalModelRuntime =
                 Florence2RuntimeAdapter(spec)

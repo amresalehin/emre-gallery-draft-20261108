@@ -10,6 +10,7 @@ import android.util.Log
 import androidx.exifinterface.media.ExifInterface
 import com.amresalehin.emregallery.data.CloudAiProvider
 import com.amresalehin.emregallery.data.FlorenceModelManager
+import com.amresalehin.emregallery.data.FlorenceStatus
 import com.amresalehin.emregallery.data.MediaItem
 import com.amresalehin.emregallery.data.PreferencesRepository
 import com.amresalehin.emregallery.data.preferences.AiPreferencesManager
@@ -104,29 +105,27 @@ object AiImageTagger {
         val rawModel = (preferredModel ?: AiTaggingSettings.getSelectedModel(context)).trim()
         val targetModel = rawModel.lowercase()
 
-        // 1. FLORENCE-2 BASE (1 of 4 downloaded on-device models)
-        if (targetModel == AiTaggingSettings.MODEL_FLORENCE_2 || targetModel == "florence-2" || targetModel == "florence-2-base") {
-            val isInstalled = FlorenceModelManager.isInstalled(context, "florence2")
+        // 1. FLORENCE-2 BASE
+        if (targetModel == AiTaggingSettings.MODEL_FLORENCE_2 ||
+            targetModel == "florence-2" ||
+            targetModel == "florence-2-base"
+        ) {
+            val state = FlorenceModelManager.getModelState("florence2")
+            val installed = FlorenceModelManager.isInstalled(context, "florence2")
             val durationMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startNs)
-            if (isInstalled) {
-                val localResult = runCatching {
-                    tagWithLocalFlorence(context, item)
-                }.getOrNull()
-
-                if (localResult != null && localResult.isNotEmpty()) {
-                    return@withContext AiTaggingResult(
-                        tags = localResult,
-                        engineName = "Florence-2 On-Device",
-                        durationMs = durationMs
-                    )
-                }
+            val message = when {
+                state.status == FlorenceStatus.ASSETS_DOWNLOADED_RUNTIME_UNAVAILABLE ->
+                    "Florence-2 model files are downloaded and graph-checked, but image-to-text generation is not available in this app build."
+                !installed -> "Florence-2 model is not downloaded. Please download it in AI Settings."
+                else ->
+                    "Florence-2 ONNX graphs are installed, but image preprocessing, tokenization, autoregressive decoding, and text post-processing are not implemented yet. No placeholder tags were saved."
             }
             return@withContext AiTaggingResult(
                 tags = emptyList(),
-                engineName = "Florence-2",
+                engineName = "Florence-2 (generation unavailable)",
                 durationMs = durationMs,
                 isSuccess = false,
-                errorMessage = "Florence-2 model is not downloaded. Please download it in AI Settings."
+                errorMessage = message
             )
         }
 
@@ -420,18 +419,6 @@ object AiImageTagger {
         }
 
         return@withContext cleanTagsList(content)
-    }
-
-    /**
-     * Tags image using Florence-2 local vision model.
-     */
-    private fun tagWithLocalFlorence(context: Context, item: MediaItem): List<String> {
-        val tags = mutableListOf<String>()
-        tags.add("florence2")
-        tags.add("vision-language")
-        tags.add("detailed caption")
-        tags.add(if (item.isVideo) "video" else "photo")
-        return tags.distinct().take(10)
     }
 
     /**

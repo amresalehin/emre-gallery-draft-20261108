@@ -215,7 +215,7 @@ class AiConfigurationTest {
         assertEquals("onnx-community/Florence-2-base", florence.upstreamRepo)
         assertEquals(ModelTaskType.VISION_LANGUAGE, florence.taskType)
         assertEquals(ModelArchitecture.FLORENCE2, florence.architecture)
-        assertTrue("Florence-2 must have runtime adapter", florence.hasRuntimeAdapter)
+        assertFalse("Florence-2 graph validation is not an image-generation runtime", florence.hasRuntimeAdapter)
 
         val paths = florence.artifacts.map { it.relativePath }
         assertTrue("Must include vision encoder", paths.contains("onnx/vision_encoder_quantized.onnx"))
@@ -344,7 +344,7 @@ class AiConfigurationTest {
             assertTrue("Error should mention HTTP 404: ${e.message}", e.message?.contains("404") == true)
         }
 
-        mockWebServer.enqueue(MockResponse().setResponseCode(500))
+        repeat(3) { mockWebServer.enqueue(MockResponse().setResponseCode(500)) }
         val url500 = mockWebServer.url("/server-error").toString()
 
         try {
@@ -557,4 +557,69 @@ class AiConfigurationTest {
         assertTrue(failure.reason.contains("Missing or empty files"))
         assertFalse(adapter.isReady)
     }
+
+    @Test
+    fun testDownloaderRetriesTransientHttpFailure() = runBlocking {
+        val targetFile = tempFolder.newFile("retry_test.bin").apply { delete() }
+        mockWebServer.enqueue(MockResponse().setResponseCode(503))
+        mockWebServer.enqueue(MockResponse().setResponseCode(200).setBody("RETRIED_OK"))
+        LocalModelDownloadManager.downloadArtifactFile(
+            url = mockWebServer.url("/retry").toString(),
+            destination = targetFile,
+            expectedBytes = "RETRIED_OK".length.toLong(),
+            onProgress = {}
+        )
+        assertEquals("RETRIED_OK", targetFile.readText())
+        assertEquals(2, mockWebServer.requestCount)
+    }
+
+    @Test
+    fun testDownloaderFollowsSeeOtherRedirect() = runBlocking {
+        val targetFile = tempFolder.newFile("see_other_test.bin").apply { delete() }
+        mockWebServer.enqueue(MockResponse().setResponseCode(303).setHeader("Location", "/after-redirect"))
+        mockWebServer.enqueue(MockResponse().setResponseCode(200).setBody("REDIRECT_OK"))
+        LocalModelDownloadManager.downloadArtifactFile(
+            url = mockWebServer.url("/redirect").toString(),
+            destination = targetFile,
+            expectedBytes = "REDIRECT_OK".length.toLong(),
+            onProgress = {}
+        )
+        assertEquals("REDIRECT_OK", targetFile.readText())
+    }
+
+    @Test
+    fun testDownloaderRejectsWrongContentRangeOffset() = runBlocking {
+        val targetFile = tempFolder.newFile("bad_range_test.bin")
+        targetFile.writeText("PREFIX")
+        repeat(3) {
+            mockWebServer.enqueue(
+                MockResponse().setResponseCode(206)
+                    .setHeader("Content-Range", "bytes 5-8/10")
+                    .setBody("DATA")
+            )
+        }
+        try {
+            LocalModelDownloadManager.downloadArtifactFile(
+                url = mockWebServer.url("/bad-range").toString(),
+                destination = targetFile,
+                expectedBytes = 10L,
+                onProgress = {}
+            )
+            fail("Expected IOException for mismatched Content-Range offset")
+        } catch (e: IOException) {
+            assertTrue(e.message.orEmpty().contains("Content-Range"))
+        }
+        assertFalse("Invalid partial data must not be retained", targetFile.exists())
+    }
+
+    @Test
+    fun testUnknownModelIdDoesNotFallBackToFlorence() {
+        try {
+            LocalModelRegistry.getSpec("not-a-real-model")
+            fail("Unknown model ID must be rejected")
+        } catch (e: IllegalArgumentException) {
+            assertTrue(e.message.orEmpty().contains("not-a-real-model"))
+        }
+    }
+
 }
