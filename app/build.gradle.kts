@@ -19,6 +19,25 @@ android {
         ndk {
             abiFilters += listOf("arm64-v8a", "x86_64")
         }
+        externalNativeBuild {
+            cmake {
+                arguments += listOf(
+                    "-DCMAKE_BUILD_TYPE=Release",
+                    "-DBUILD_SHARED_LIBS=ON",
+                    "-DLLAMA_BUILD_COMMON=OFF",
+                    "-DLLAMA_BUILD_TOOLS=OFF",
+                    "-DLLAMA_BUILD_TESTS=OFF",
+                    "-DLLAMA_BUILD_EXAMPLES=OFF",
+                    "-DLLAMA_BUILD_SERVER=OFF",
+                    "-DLLAMA_BUILD_APP=OFF",
+                    "-DLLAMA_BUILD_MTMD=ON",
+                    "-DLLAMA_OPENSSL=OFF",
+                    "-DGGML_OPENMP=OFF",
+                    "-DGGML_NATIVE=OFF",
+                    "-DGGML_LLAMAFILE=OFF"
+                )
+            }
+        }
         resourceConfigurations += listOf("en")
     }
 
