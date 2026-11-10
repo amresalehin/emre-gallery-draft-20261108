@@ -188,6 +188,29 @@ object LocalModelInstaller {
     }
 
     /**
+     * Deletes a superseded assets-only installation whose files were never runtime-usable.
+     * This avoids requiring a second multi-gigabyte copy when replacing the previous Gemma file.
+     */
+    private fun pruneObsoleteAssetsOnlyInstall(context: Context, spec: LocalModelSpec) {
+        if (!spec.hasRuntimeAdapter) return
+        val modelDir = getModelDir(context, spec)
+        val manifestFile = File(modelDir, spec.manifestFileName)
+        if (!manifestFile.isFile) return
+        val manifest = runCatching { JSONObject(manifestFile.readText()) }.getOrNull() ?: return
+        if (manifest.optString("status") != "ASSETS_DOWNLOADED_RUNTIME_UNAVAILABLE") return
+        if (manifest.optString("upstreamRepo") != spec.upstreamRepo) return
+        if (manifest.optString("upstreamRevision") == spec.upstreamRevision) return
+        val oldId = manifest.optString("id")
+        if (oldId.isNotBlank() && oldId != spec.id && oldId != spec.canonicalId &&
+            !spec.legacyAliases.contains(oldId)
+        ) return
+        if (!modelDir.deleteRecursively()) {
+            throw IOException("Unable to remove obsolete assets-only model before reinstall: ${modelDir.absolutePath}")
+        }
+        Log.i(TAG, "Removed obsolete assets-only ${spec.displayName} files before downloading the current runtime-ready revision.")
+    }
+
+    /**
      * Downloads, validates, and atomically installs [spec] into its target directory.
      */
     suspend fun downloadAndInstall(
@@ -224,6 +247,8 @@ object LocalModelInstaller {
                 rollbackPromotion(modelDir, stagingDir, backupDir, false)
             }
         }
+
+        pruneObsoleteAssetsOnlyInstall(context, spec)
 
         // Storage preflight is incremental: existing valid staged bytes are reusable.
         stagingDir.mkdirs()
