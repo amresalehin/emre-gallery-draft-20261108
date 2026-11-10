@@ -13,7 +13,7 @@
 #include "mtmd-helper.h"
 
 namespace {
-constexpr const char * kTag = "EmreQwen3.55";
+constexpr const char * kTag = "EmreQwen35";
 constexpr int32_t kContextSize = 4096;
 constexpr int32_t kBatchSize = 1024;
 constexpr int32_t kThreads = 4;
@@ -266,7 +266,7 @@ Java_com_amresalehin_emregallery_ai_local_Qwen35Native_generateImage(
         generated += token_piece(vocab, token);
         llama_sampler_accept(sampler, token);
         if (!decode_generated_token(g_context, batch, token, next_position++)) {
-            set_error("llama.cpp failed while decoding an Qwen3.5 output token.");
+            set_error("llama.cpp failed while decoding a Qwen3.5 output token.");
             generated.clear();
             break;
         }
