@@ -13,6 +13,7 @@ import org.json.JSONObject
 import java.io.File
 import java.io.IOException
 import java.security.MessageDigest
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * Robust installer and integrity validator for on-device AI models.
@@ -23,6 +24,19 @@ object LocalModelInstaller {
 
     private const val TAG = "LocalModelInstaller"
     private const val SAFETY_MARGIN_BYTES = 50L * 1024 * 1024 // 50MB safety margin
+
+    private data class VerifiedArtifactFingerprint(
+        val length: Long,
+        val lastModified: Long,
+        val sha256: String?,
+        val md5: String?
+    )
+
+    // A MiniCPM install is ~1.6 GB. Never re-hash both GGUFs for every photo
+    // during a library indexing pass; the installer records the verified file
+    // size/mtime/digests in the manifest, with an in-memory fallback cache.
+    private val verifiedArtifactFingerprints =
+        ConcurrentHashMap<String, VerifiedArtifactFingerprint>()
 
     fun getModelDir(filesDir: File, spec: LocalModelSpec): File {
         return File(filesDir, spec.subdir)
@@ -149,23 +163,50 @@ object LocalModelInstaller {
                     errorMessage = "Artifact " + artifact.relativePath + " size mismatch: expected " + artifact.exactBytes + ", got " + len
                 )
             }
-            if (!artifact.sha256Hex.isNullOrBlank()) {
-                val actualHash = runCatching { computeSha256(file) }.getOrNull()
-                if (actualHash == null || !actualHash.equals(artifact.sha256Hex, ignoreCase = true)) {
-                    return LocalModelState(
-                        status = LocalModelStatus.ERROR,
-                        errorMessage = "Artifact " + artifact.relativePath + " failed SHA-256 validation."
-                    )
-                }
+            val fingerprint = VerifiedArtifactFingerprint(
+                length = len,
+                lastModified = file.lastModified(),
+                sha256 = artifact.sha256Hex,
+                md5 = artifact.md5Hex
+            )
+            val cacheKey = "${spec.id}@${spec.upstreamRevision}/${artifact.relativePath}"
+            val manifestArtifacts = manifestJson.optJSONArray("artifacts")
+            val installedRecord = manifestArtifacts?.let { records ->
+                (0 until records.length())
+                    .asSequence()
+                    .mapNotNull { index -> records.optJSONObject(index) }
+                    .firstOrNull { it.optString("path") == artifact.relativePath }
             }
-            if (!artifact.md5Hex.isNullOrBlank()) {
-                val actualHash = runCatching { computeMd5(file) }.getOrNull()
-                if (actualHash == null || !actualHash.equals(artifact.md5Hex, ignoreCase = true)) {
-                    return LocalModelState(
-                        status = LocalModelStatus.ERROR,
-                        errorMessage = "Artifact " + artifact.relativePath + " failed MD5 validation."
-                    )
+            val manifestFingerprintMatches =
+                installedRecord?.optLong("bytes", -1L) == len &&
+                installedRecord.optLong("lastModified", -1L) == file.lastModified() &&
+                (artifact.sha256Hex.isNullOrBlank() ||
+                    installedRecord.optString("sha256").equals(artifact.sha256Hex, ignoreCase = true)) &&
+                (artifact.md5Hex.isNullOrBlank() ||
+                    installedRecord.optString("md5").equals(artifact.md5Hex, ignoreCase = true))
+            val alreadyVerified = manifestFingerprintMatches ||
+                verifiedArtifactFingerprints[cacheKey] == fingerprint
+
+            if (!alreadyVerified) {
+                if (!artifact.sha256Hex.isNullOrBlank()) {
+                    val actualHash = runCatching { computeSha256(file) }.getOrNull()
+                    if (actualHash == null || !actualHash.equals(artifact.sha256Hex, ignoreCase = true)) {
+                        return LocalModelState(
+                            status = LocalModelStatus.ERROR,
+                            errorMessage = "Artifact " + artifact.relativePath + " failed SHA-256 validation."
+                        )
+                    }
                 }
+                if (!artifact.md5Hex.isNullOrBlank()) {
+                    val actualHash = runCatching { computeMd5(file) }.getOrNull()
+                    if (actualHash == null || !actualHash.equals(artifact.md5Hex, ignoreCase = true)) {
+                        return LocalModelState(
+                            status = LocalModelStatus.ERROR,
+                            errorMessage = "Artifact " + artifact.relativePath + " failed MD5 validation."
+                        )
+                    }
+                }
+                verifiedArtifactFingerprints[cacheKey] = fingerprint
             }
             totalInstalledBytes += len
         }
@@ -532,6 +573,8 @@ object LocalModelInstaller {
                             put("externalDataFor", art.externalDataFor)
                         }
                     }
+                    val installedArtifactFile = File(modelDir, art.relativePath)
+                    artObj.put("lastModified", installedArtifactFile.lastModified())
                     artArray.put(artObj)
                 }
                 put("artifacts", artArray)
