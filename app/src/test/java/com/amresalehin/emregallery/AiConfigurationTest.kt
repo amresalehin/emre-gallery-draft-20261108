@@ -522,6 +522,7 @@ class AiConfigurationTest {
         val expectedHash = "dffd6021bb2bd5b0af676290809ec3a53191dd81c7f70a4b28688a362182986f"
         val computed = LocalModelInstaller.computeSha256(testFile)
         assertEquals(expectedHash, computed)
+        assertEquals("65a8e27d8879283831b664bd8b7f0ad4", LocalModelInstaller.computeMd5(testFile))
     }
 
     @Test
