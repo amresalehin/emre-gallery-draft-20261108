@@ -86,24 +86,30 @@ class AiConfigurationTest {
         mockWebServer.enqueue(
             MockResponse()
                 .setResponseCode(200)
-                .setBody("""{"data":[{"id":"gpt-4o"}]}""")
+                .setHeader("Content-Type", "application/json")
+                .setBody("""{"choices":[{"message":{"content":"gray square, neutral background, simple texture"}}]}""")
         )
 
-        val testBaseUrl = mockWebServer.url("/v1").toString()
         val provider = CloudAiProvider(
             name = "MockServer",
-            baseUrl = testBaseUrl,
+            baseUrl = mockWebServer.url("/v1").toString(),
             apiKey = "test-token",
-            modelId = "gpt-4o"
+            modelId = "gpt-6.1-sol"
         )
 
         val result = CloudAiConnectionTester.testConnection(provider)
         assertEquals(CloudProviderStatus.CONNECTED, result.status)
-        assertTrue(result.message.contains("Connected (HTTP 200"))
+        assertTrue(result.message.contains("Vision ready"))
         assertTrue(result.latencyMs >= 0L)
 
         val recordedRequest = mockWebServer.takeRequest()
         assertEquals("Bearer test-token", recordedRequest.getHeader("Authorization"))
+        assertEquals("/v1/chat/completions", recordedRequest.path)
+        val requestBody = JSONObject(recordedRequest.body.readUtf8())
+        assertEquals("gpt-6.1-sol", requestBody.getString("model"))
+        val content = requestBody.getJSONArray("messages").getJSONObject(0).getJSONArray("content")
+        assertEquals("image_url", content.getJSONObject(1).getString("type"))
+        assertTrue(content.getJSONObject(1).getJSONObject("image_url").getString("url").startsWith("data:image/jpeg;base64,"))
     }
 
     @Test
@@ -111,20 +117,21 @@ class AiConfigurationTest {
         mockWebServer.enqueue(
             MockResponse()
                 .setResponseCode(401)
+                .setHeader("Content-Type", "application/json")
                 .setBody("""{"error":{"message":"Invalid API key"}}""")
         )
 
-        val testBaseUrl = mockWebServer.url("/v1").toString()
         val provider = CloudAiProvider(
             name = "MockServer",
-            baseUrl = testBaseUrl,
+            baseUrl = mockWebServer.url("/v1").toString(),
             apiKey = "bad-token",
-            modelId = "gpt-4o"
+            modelId = "gpt-6.1-sol"
         )
 
         val result = CloudAiConnectionTester.testConnection(provider)
         assertEquals(CloudProviderStatus.ERROR, result.status)
-        assertTrue(result.message.contains("Unauthorized (HTTP 401)"))
+        assertTrue(result.message.contains("HTTP 401"))
+        assertTrue(result.message.contains("Invalid API key"))
     }
 
     @Test
@@ -133,7 +140,7 @@ class AiConfigurationTest {
             name = "BlankServer",
             baseUrl = "   ",
             apiKey = "token",
-            modelId = "gpt-4o"
+            modelId = "gpt-6.1-sol"
         )
 
         val result = CloudAiConnectionTester.testConnection(provider)
