@@ -11,105 +11,45 @@ object LocalModelRegistry {
     private const val HF_RESOLVE_BASE = "https://huggingface.co"
 
     // --------------------------------------------------------------------------
-    // 1. Florence-2 Base Vision-Language Model
+    // 1. OpenBMB MiniCPM-V 4.6 (1.3B) multimodal model (llama.cpp)
     // --------------------------------------------------------------------------
-    const val FLORENCE_2_BASE_ID = "florence2"
-    const val FLORENCE_2_CANONICAL_ID = "florence-2-base"
-    const val FLORENCE_2_REPO = "onnx-community/Florence-2-base"
-    const val FLORENCE_2_REVISION = "d59e079711c57174f29265539fb4cc9f0f335916"
+    const val MINI_CPM_V46_ID = "minicpm_v_4_6"
+    const val MINI_CPM_V46_CANONICAL_ID = "minicpm-v-4.6-instruct"
+    const val MINI_CPM_V46_REPO = "openbmb/MiniCPM-V-4.6-gguf"
+    const val MINI_CPM_V46_REVISION = "78e02f066e9819a60573b78a4275df8a0c27f698"
 
-    private fun florenceUrl(relativePath: String): String =
-        "$HF_RESOLVE_BASE/$FLORENCE_2_REPO/resolve/$FLORENCE_2_REVISION/$relativePath"
+    private fun miniCpmV46Url(fileName: String): String =
+        "$HF_RESOLVE_BASE/$MINI_CPM_V46_REPO/resolve/$MINI_CPM_V46_REVISION/$fileName"
 
-    val FLORENCE_2_SPEC = LocalModelSpec(
-        id = FLORENCE_2_BASE_ID,
-        canonicalId = FLORENCE_2_CANONICAL_ID,
-        legacyAliases = listOf("florence-2-base", "florence2_base"),
-        displayName = "Florence-2 Base",
-        upstreamRepo = FLORENCE_2_REPO,
-        upstreamRevision = FLORENCE_2_REVISION,
-        description = "Microsoft Florence-2 Base ONNX vision-language model for image captioning, visual question answering, object/region understanding, and document text recognition.",
+    val MINI_CPM_V46_SPEC = LocalModelSpec(
+        id = MINI_CPM_V46_ID,
+        canonicalId = MINI_CPM_V46_CANONICAL_ID,
+        legacyAliases = listOf("minicpm-v-4.6", "minicpm_v46"),
+        displayName = "MiniCPM-V 4.6 (1.3B)",
+        upstreamRepo = MINI_CPM_V46_REPO,
+        upstreamRevision = MINI_CPM_V46_REVISION,
+        description = "OpenBMB MiniCPM-V 4.6 1.3B vision-language model using Q4_K_M weights and its F16 vision projector (about 1.6 GB; 6 GB RAM-class device recommended).",
         taskType = ModelTaskType.VISION_LANGUAGE,
-        architecture = ModelArchitecture.FLORENCE2,
-        license = "MIT",
-        subdir = "models/florence2",
-        manifestFileName = "florence_manifest.json",
-        testTagPrefix = "florence",
-        // The app validates ONNX graph files but does not implement Florence image
-        // preprocessing, tokenization, generation, or post-processing.
-        hasRuntimeAdapter = false,
+        architecture = ModelArchitecture.MINICPM_V46,
+        license = "Apache-2.0",
+        subdir = "models/minicpm_v_4_6",
+        manifestFileName = "minicpmv46_manifest.json",
+        testTagPrefix = "minicpmv46",
+        hasRuntimeAdapter = true,
         artifacts = listOf(
             LocalModelArtifact(
-                relativePath = "config.json",
-                sourceUrl = florenceUrl("config.json"),
-                exactBytes = 5_447L,
-                role = ArtifactRole.CONFIG
+                relativePath = "MiniCPM-V-4_6-Q4_K_M.gguf",
+                sourceUrl = miniCpmV46Url("MiniCPM-V-4_6-Q4_K_M.gguf"),
+                expectedMinBytes = 500_000_000L,
+                md5Hex = "fd778481dd56b6036dd8f9cf7c1519cf",
+                role = ArtifactRole.GGUF_MODEL
             ),
             LocalModelArtifact(
-                relativePath = "generation_config.json",
-                sourceUrl = florenceUrl("generation_config.json"),
-                exactBytes = 297L,
-                role = ArtifactRole.GENERATION_CONFIG
-            ),
-            LocalModelArtifact(
-                relativePath = "preprocessor_config.json",
-                sourceUrl = florenceUrl("preprocessor_config.json"),
-                exactBytes = 2_673L,
-                role = ArtifactRole.PREPROCESSOR_CONFIG
-            ),
-            LocalModelArtifact(
-                relativePath = "processor_config.json",
-                sourceUrl = florenceUrl("processor_config.json"),
-                exactBytes = 130L,
-                role = ArtifactRole.PROCESSOR_CONFIG
-            ),
-            LocalModelArtifact(
-                relativePath = "tokenizer.json",
-                sourceUrl = florenceUrl("tokenizer.json"),
-                exactBytes = 2_297_961L,
-                role = ArtifactRole.TOKENIZER
-            ),
-            LocalModelArtifact(
-                relativePath = "tokenizer_config.json",
-                sourceUrl = florenceUrl("tokenizer_config.json"),
-                exactBytes = 197_658L,
-                role = ArtifactRole.TOKENIZER_CONFIG
-            ),
-            LocalModelArtifact(
-                relativePath = "special_tokens_map.json",
-                sourceUrl = florenceUrl("special_tokens_map.json"),
-                exactBytes = 146_627L,
-                role = ArtifactRole.SPECIAL_TOKENS
-            ),
-            LocalModelArtifact(
-                relativePath = "added_tokens.json",
-                sourceUrl = florenceUrl("added_tokens.json"),
-                exactBytes = 22_410L,
-                role = ArtifactRole.SPECIAL_TOKENS
-            ),
-            LocalModelArtifact(
-                relativePath = "onnx/vision_encoder_quantized.onnx",
-                sourceUrl = florenceUrl("onnx/vision_encoder_quantized.onnx"),
-                exactBytes = 93_788_276L,
-                role = ArtifactRole.ONNX_GRAPH
-            ),
-            LocalModelArtifact(
-                relativePath = "onnx/embed_tokens_quantized.onnx",
-                sourceUrl = florenceUrl("onnx/embed_tokens_quantized.onnx"),
-                exactBytes = 39_390_496L,
-                role = ArtifactRole.ONNX_GRAPH
-            ),
-            LocalModelArtifact(
-                relativePath = "onnx/encoder_model_quantized.onnx",
-                sourceUrl = florenceUrl("onnx/encoder_model_quantized.onnx"),
-                exactBytes = 43_651_493L,
-                role = ArtifactRole.ONNX_GRAPH
-            ),
-            LocalModelArtifact(
-                relativePath = "onnx/decoder_model_merged_quantized.onnx",
-                sourceUrl = florenceUrl("onnx/decoder_model_merged_quantized.onnx"),
-                exactBytes = 98_177_854L,
-                role = ArtifactRole.ONNX_GRAPH
+                relativePath = "mmproj-model-f16.gguf",
+                sourceUrl = miniCpmV46Url("mmproj-model-f16.gguf"),
+                expectedMinBytes = 1_100_000_000L,
+                md5Hex = "54aea6e04d752f47309a48f12795a1a3",
+                role = ArtifactRole.GGUF_MMPROJ
             )
         )
     )
@@ -241,7 +181,7 @@ object LocalModelRegistry {
         GEMMA_4_SPEC,
         LFM2_5_SPEC,
         QWEN3_5_SPEC,
-        FLORENCE_2_SPEC
+        MINI_CPM_V46_SPEC
     )
 
     fun findSpec(idOrAlias: String): LocalModelSpec? {
