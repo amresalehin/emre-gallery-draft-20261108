@@ -478,7 +478,7 @@ class AiConfigurationTest {
         LocalModelDownloadManager.downloadArtifactFile(
             url = mockWebServer.url("/range-416-restart").toString(),
             destination = targetFile,
-            expectedBytes = finalBody.toByteArray().size.toLong(),
+            expectedBytes = null,
             onProgress = {}
         )
 
