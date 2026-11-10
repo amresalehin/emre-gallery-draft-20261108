@@ -13,6 +13,7 @@ import org.junit.After
 import org.junit.Assert.*
 import org.junit.Before
 import org.junit.Test
+import java.io.IOException
 
 class AiImageTaggerTest {
 
@@ -129,12 +130,12 @@ class AiImageTaggerTest {
     }
 
     @Test
-    fun testCloudVisionTagExtractionHandlesErrorGracefully() = runBlocking {
+    fun testCloudVisionTagExtractionReturnsActionableUnauthorizedError() = runBlocking {
         mockWebServer.enqueue(
             MockResponse()
                 .setResponseCode(401)
                 .setHeader("Content-Type", "application/json")
-                .setBody("{\"error\": {\"message\": \"Invalid API key\"}}")
+                .setBody("{\\\"error\\\": {\\\"message\\\": \\\"Invalid API key\\\"}}")
         )
 
         val baseUrl = mockWebServer.url("/v1/").toString()
@@ -148,11 +149,17 @@ class AiImageTaggerTest {
         )
 
         val sampleJpeg = ByteArray(50) { 0x11 }
-        val tags = AiImageTagger.tagWithCloudVisionDirect(provider, sampleJpeg)
+        val error = try {
+            AiImageTagger.tagWithCloudVisionDirect(provider, sampleJpeg)
+            null
+        } catch (failure: IOException) {
+            failure
+        }
 
-        assertTrue("Failed API call should return empty list gracefully", tags.isEmpty())
+        assertNotNull("Direct cloud inference should expose the provider error", error)
+        assertTrue(error?.message.orEmpty().contains("HTTP 401"))
+        assertTrue(error?.message.orEmpty().contains("Invalid API key"))
     }
-
     @Test
     fun testCloudVisionAcceptsOpenAiContentArrayResponse() = runBlocking {
         mockWebServer.enqueue(
