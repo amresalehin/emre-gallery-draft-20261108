@@ -34,6 +34,7 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.ByteArrayOutputStream
+import java.io.IOException
 import java.io.InputStream
 import java.util.concurrent.TimeUnit
 import kotlin.math.abs
@@ -65,7 +66,7 @@ object AiImageTagger {
     private val httpClient: OkHttpClient by lazy {
         OkHttpClient.Builder()
             .connectTimeout(15, TimeUnit.SECONDS)
-            .readTimeout(25, TimeUnit.SECONDS)
+            .readTimeout(90, TimeUnit.SECONDS)
             .writeTimeout(15, TimeUnit.SECONDS)
             .followRedirects(true)
             .build()
@@ -218,26 +219,37 @@ object AiImageTagger {
                     else -> null
                 }
                 val modelNameUsed = modelOverride?.ifBlank { null } ?: cloudProvider.modelId.ifBlank { "default" }
-                val cloudResult = runCatching {
+                val cloudEngineName = "Cloud Vision (${cloudProvider.name} • $modelNameUsed)"
+                val cloudResult = try {
                     tagWithCloudVision(context, item, cloudProvider, modelOverride)
-                }.getOrNull()
-
-                val durationMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startNs)
-                if (cloudResult != null && cloudResult.isNotEmpty()) {
-                    return@withContext AiTaggingResult(
-                        tags = cloudResult,
-                        engineName = "Cloud Vision (${cloudProvider.name} • $modelNameUsed)",
-                        durationMs = durationMs
-                    )
-                } else {
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (error: Exception) {
+                    val durationMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startNs)
                     return@withContext AiTaggingResult(
                         tags = emptyList(),
-                        engineName = "Cloud Vision (${cloudProvider.name} • $modelNameUsed)",
+                        engineName = cloudEngineName,
                         durationMs = durationMs,
                         isSuccess = false,
-                        errorMessage = "Cloud AI request returned no tags. Check provider connection and API key."
+                        errorMessage = error.message ?: "Cloud image request failed. Check the provider URL, API key, and model ID."
                     )
                 }
+
+                val durationMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startNs)
+                if (cloudResult.isEmpty()) {
+                    return@withContext AiTaggingResult(
+                        tags = emptyList(),
+                        engineName = cloudEngineName,
+                        durationMs = durationMs,
+                        isSuccess = false,
+                        errorMessage = "The cloud model returned no usable tags. Confirm that the selected model supports image input."
+                    )
+                }
+                return@withContext AiTaggingResult(
+                    tags = cloudResult,
+                    engineName = cloudEngineName,
+                    durationMs = durationMs
+                )
             }
 
             val durationMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startNs)
@@ -257,7 +269,7 @@ object AiImageTagger {
     }
 
     /**
-     * Tags image using standard OpenAI-compatible or Google Gemini multimodal chat completions endpoint.
+     * Loads a downsampled image and delegates to the shared multimodal request path.
      */
     private suspend fun tagWithCloudVision(
         context: Context,
@@ -265,157 +277,228 @@ object AiImageTagger {
         provider: CloudAiProvider,
         modelOverride: String? = null
     ): List<String> = withContext(Dispatchers.IO) {
-        val bitmap = loadSampledBitmap(context, Uri.parse(item.uri), maxDimension = 512)
-            ?: return@withContext emptyList()
+        val bitmap = loadSampledBitmap(context, Uri.parse(item.uri), maxDimension = 768)
+            ?: throw IOException("Could not decode the selected image. Check that the media file is still accessible.")
 
-        val outputStream = ByteArrayOutputStream()
-        bitmap.compress(Bitmap.CompressFormat.JPEG, 80, outputStream)
-        val imageBytes = outputStream.toByteArray()
-        bitmap.recycle()
+        val imageBytes = try {
+            ByteArrayOutputStream().use { output ->
+                if (!bitmap.compress(Bitmap.CompressFormat.JPEG, 82, output)) {
+                    throw IOException("Could not encode the selected image for Cloud AI.")
+                }
+                output.toByteArray()
+            }
+        } finally {
+            bitmap.recycle()
+        }
 
-        return@withContext tagWithCloudVisionDirect(provider, imageBytes, modelOverride)
+        tagWithCloudVisionDirect(provider, imageBytes, modelOverride)
     }
 
     /**
-     * Tags directly using image byte array (supports OpenAI-compatible and Google Gemini formats).
+     * Sends one image to a native Gemini endpoint or an OpenAI-compatible vision endpoint.
+     * Failures are thrown with provider-specific messages so the caller and connection test
+     * can distinguish an authentication, quota, endpoint, model, or transport problem.
      */
     suspend fun tagWithCloudVisionDirect(
         provider: CloudAiProvider,
         imageBytes: ByteArray,
         modelOverride: String? = null
     ): List<String> = withContext(Dispatchers.IO) {
-        val base64Image = encodeBase64(imageBytes)
+        if (imageBytes.isEmpty()) throw IOException("The image payload is empty.")
 
         val rawBase = provider.baseUrl.trim().trimEnd('/')
-        val modelToUse = modelOverride?.takeIf { it.isNotBlank() && it != "cloud" && !it.startsWith("cloud_") && it != provider.id }
-            ?: provider.modelId.ifBlank { "gpt-4o-mini" }
+        if (rawBase.isBlank()) throw IOException("Cloud provider Base URL cannot be blank.")
+        val normalizedBase = when {
+            rawBase.startsWith("https://", ignoreCase = true) ||
+                rawBase.startsWith("http://", ignoreCase = true) -> rawBase
+            else -> "https://$rawBase"
+        }
 
-        // Check if this is a native Google Gemini endpoint (generativelanguage.googleapis.com without /openai)
-        val isNativeGemini = rawBase.contains("generativelanguage.googleapis.com", ignoreCase = true) &&
-                !rawBase.contains("/openai", ignoreCase = true)
-
-        if (isNativeGemini) {
-            val geminiModel = if (modelToUse.contains("/")) modelToUse.substringAfterLast('/') else modelToUse
-            val geminiUrl = if (rawBase.contains(":generateContent")) {
-                if (!rawBase.contains("key=")) "$rawBase?key=${provider.apiKey.trim()}" else rawBase
-            } else {
-                val cleanBase = if (rawBase.endsWith("/v1beta") || rawBase.endsWith("/v1")) rawBase else "$rawBase/v1beta"
-                "$cleanBase/models/$geminiModel:generateContent?key=${provider.apiKey.trim()}"
+        val modelToUse = modelOverride
+            ?.takeIf {
+                it.isNotBlank() &&
+                    it != "cloud" &&
+                    !it.startsWith("cloud_") &&
+                    it != provider.id
+            }
+            ?: provider.modelId.ifBlank {
+                if (normalizedBase.contains("generativelanguage.googleapis.com", ignoreCase = true)) {
+                    "gemini-3.8-flash"
+                } else {
+                    "gpt-6.1-sol"
+                }
             }
 
-            val requestPayload = JSONObject().apply {
-                put("contents", JSONArray().apply {
-                    put(JSONObject().apply {
-                        put("parts", JSONArray().apply {
-                            put(JSONObject().apply {
-                                put("text", "Generate 4 to 8 concise, specific, lowercase keyword tags describing the subjects, setting, style, and objects in this photo. Return ONLY a comma-separated list of tags, without explanation or markdown.")
-                            })
-                            put(JSONObject().apply {
-                                put("inline_data", JSONObject().apply {
-                                    put("mime_type", "image/jpeg")
-                                    put("data", base64Image)
-                                })
-                            })
-                        })
-                    })
+        val base64Image = encodeBase64(imageBytes)
+        val prompt = "Inspect this image and return 4 to 8 concise, lowercase search tags. " +
+            "Describe only clearly visible subjects, objects, setting, activity, and visual style. " +
+            "Do not infer identities or hidden context. Return only comma-separated tags, with no explanation."
+
+        val isNativeGemini = normalizedBase.contains("generativelanguage.googleapis.com", ignoreCase = true) &&
+            !normalizedBase.contains("/openai", ignoreCase = true)
+
+        val request = if (isNativeGemini) {
+            if (provider.apiKey.isBlank()) {
+                throw IOException("Google Gemini requires an API key. Add a Gemini API key and save the provider.")
+            }
+
+            val geminiModel = modelToUse.removePrefix("models/").substringAfterLast('/')
+            val endpoint = when {
+                normalizedBase.endsWith(":generateContent", ignoreCase = true) -> normalizedBase
+                Regex("/models/[^/]+:generateContent$", RegexOption.IGNORE_CASE).containsMatchIn(normalizedBase) -> normalizedBase
+                normalizedBase.endsWith("/v1beta", ignoreCase = true) ||
+                    normalizedBase.endsWith("/v1", ignoreCase = true) -> "$normalizedBase/models/$geminiModel:generateContent"
+                else -> "$normalizedBase/v1beta/models/$geminiModel:generateContent"
+            }
+
+            val payload = JSONObject().apply {
+                put("contents", JSONArray().put(JSONObject().apply {
+                    put("role", "user")
+                    put("parts", JSONArray()
+                        .put(JSONObject().put("text", prompt))
+                        .put(JSONObject().put("inline_data", JSONObject().apply {
+                            put("mime_type", "image/jpeg")
+                            put("data", base64Image)
+                        }))
+                    )
+                }))
+                put("generationConfig", JSONObject().apply {
+                    put("temperature", 0.2)
+                    put("maxOutputTokens", 160)
                 })
             }
 
-            val reqBuilder = Request.Builder()
-                .url(geminiUrl)
-                .post(requestPayload.toString().toRequestBody("application/json".toMediaType()))
-
-            val response = try {
-                httpClient.newCall(reqBuilder.build()).execute()
-            } catch (e: Exception) {
-                null
+            Request.Builder()
+                .url(endpoint)
+                .header("x-goog-api-key", provider.apiKey.trim())
+                .post(payload.toString().toRequestBody("application/json".toMediaType()))
+                .build()
+        } else {
+            val endpoint = when {
+                normalizedBase.endsWith("/chat/completions", ignoreCase = true) -> normalizedBase
+                listOf(
+                    "/v1",
+                    "/v1beta/openai",
+                    "/openai/v1",
+                    "/openai",
+                    "/api/v1",
+                    "/api/openai/v1"
+                ).any { normalizedBase.endsWith(it, ignoreCase = true) } ->
+                    "$normalizedBase/chat/completions"
+                else -> "$normalizedBase/v1/chat/completions"
             }
 
-            if (response != null && response.isSuccessful) {
-                val responseBody = response.body?.string().orEmpty()
-                response.close()
-                if (responseBody.isNotBlank()) {
-                    val parsedJson = JSONObject(responseBody)
-                    val candidates = parsedJson.optJSONArray("candidates")
-                    if (candidates != null && candidates.length() > 0) {
-                        val parts = candidates.getJSONObject(0).optJSONObject("content")?.optJSONArray("parts")
-                        val text = parts?.optJSONObject(0)?.optString("text").orEmpty()
-                        if (text.isNotBlank()) {
-                            return@withContext cleanTagsList(text)
+            val payload = JSONObject().apply {
+                put("model", modelToUse)
+                put("messages", JSONArray().put(JSONObject().apply {
+                    put("role", "user")
+                    put("content", JSONArray()
+                        .put(JSONObject().apply {
+                            put("type", "text")
+                            put("text", prompt)
+                        })
+                        .put(JSONObject().apply {
+                            put("type", "image_url")
+                            put("image_url", JSONObject().put("url", "data:image/jpeg;base64,$base64Image"))
+                        })
+                    )
+                }))
+                put("max_tokens", 160)
+                put("temperature", 0.2)
+            }
+
+            val requestBuilder = Request.Builder()
+                .url(endpoint)
+                .post(payload.toString().toRequestBody("application/json".toMediaType()))
+            if (provider.apiKey.isNotBlank()) {
+                requestBuilder.header("Authorization", "Bearer ${provider.apiKey.trim()}")
+            }
+            requestBuilder.build()
+        }
+
+        val response = httpClient.newCall(request).execute()
+        val responseBody = response.use { it.body?.string().orEmpty() }
+        if (!response.isSuccessful) {
+            Log.w(TAG, "Cloud vision request failed: HTTP ${response.code}")
+            throw IOException(cloudHttpError(provider.name, response.code, responseBody))
+        }
+        if (responseBody.isBlank()) throw IOException("Cloud provider returned an empty response.")
+
+        val parsed = try {
+            JSONObject(responseBody)
+        } catch (error: Exception) {
+            throw IOException("Cloud provider returned invalid JSON: ${error.message ?: "unparseable response"}")
+        }
+
+        val responseText = extractCloudResponseText(parsed)
+        val tags = cleanTagsList(responseText)
+        if (tags.isEmpty()) {
+            val providerMessage = parsed.optJSONObject("error")?.optString("message").orEmpty()
+            throw IOException(
+                providerMessage.ifBlank {
+                    "The selected model returned no usable tags. Check the model ID and confirm that it supports image input."
+                }
+            )
+        }
+        tags
+    }
+
+    private fun extractCloudResponseText(payload: JSONObject): String {
+        payload.optString("output_text").takeIf { it.isNotBlank() }?.let { return it }
+
+        val choices = payload.optJSONArray("choices")
+        if (choices != null && choices.length() > 0) {
+            val message = choices.optJSONObject(0)?.optJSONObject("message")
+            when (val content = message?.opt("content")) {
+                is String -> if (content.isNotBlank()) return content
+                is JSONArray -> {
+                    val textParts = buildList {
+                        for (index in 0 until content.length()) {
+                            val part = content.optJSONObject(index) ?: continue
+                            val text = part.optString("text")
+                            if (text.isNotBlank()) add(text)
                         }
                     }
+                    if (textParts.isNotEmpty()) return textParts.joinToString("\n")
                 }
-            } else {
-                response?.close()
             }
         }
 
-        // Standard OpenAI-compatible /chat/completions endpoint
-        val endpoint = when {
-            rawBase.endsWith("/chat/completions", ignoreCase = true) -> rawBase
-            rawBase.endsWith("/v1", ignoreCase = true) -> "$rawBase/chat/completions"
-            else -> "$rawBase/v1/chat/completions"
-        }
-
-        val requestPayload = JSONObject().apply {
-            put("model", modelToUse)
-            put("messages", JSONArray().apply {
-                put(JSONObject().apply {
-                    put("role", "user")
-                    put("content", JSONArray().apply {
-                        put(JSONObject().apply {
-                            put("type", "text")
-                            put("text", "Generate 4 to 8 concise, specific, lowercase keyword tags describing the subjects, setting, style, and objects in this photo (e.g. sunset, beach, ocean, landscape, nature, portrait, food, architecture, document). Return ONLY a comma-separated list of tags, without explanation or markdown.")
-                        })
-                        put(JSONObject().apply {
-                            put("type", "image_url")
-                            put("image_url", JSONObject().apply {
-                                put("url", "data:image/jpeg;base64,$base64Image")
-                            })
-                        })
-                    })
-                })
-            })
-            put("max_tokens", 80)
-            put("temperature", 0.2)
-        }
-
-        val reqBuilder = Request.Builder()
-            .url(endpoint)
-            .post(requestPayload.toString().toRequestBody("application/json".toMediaType()))
-
-        if (provider.apiKey.isNotBlank()) {
-            reqBuilder.header("Authorization", "Bearer ${provider.apiKey.trim()}")
-        }
-
-        val response = httpClient.newCall(reqBuilder.build()).execute()
-        val responseBody = response.body?.string().orEmpty()
-        response.close()
-
-        if (!response.isSuccessful || responseBody.isBlank()) {
-            runCatching { Log.w(TAG, "Cloud tagging returned status ${response.code}: $responseBody") }
-            return@withContext emptyList()
-        }
-
-        val parsedJson = JSONObject(responseBody)
-        val content = when {
-            parsedJson.has("choices") -> {
-                val choices = parsedJson.optJSONArray("choices")
-                if (choices != null && choices.length() > 0) {
-                    choices.getJSONObject(0).optJSONObject("message")?.optString("content").orEmpty()
-                } else ""
+        val candidates = payload.optJSONArray("candidates")
+        if (candidates != null && candidates.length() > 0) {
+            val parts = candidates.optJSONObject(0)
+                ?.optJSONObject("content")
+                ?.optJSONArray("parts")
+            if (parts != null) {
+                return buildList {
+                    for (index in 0 until parts.length()) {
+                        val text = parts.optJSONObject(index)?.optString("text").orEmpty()
+                        if (text.isNotBlank()) add(text)
+                    }
+                }.joinToString("\n")
             }
-            parsedJson.has("candidates") -> {
-                val candidates = parsedJson.optJSONArray("candidates")
-                if (candidates != null && candidates.length() > 0) {
-                    val parts = candidates.getJSONObject(0).optJSONObject("content")?.optJSONArray("parts")
-                    parts?.optJSONObject(0)?.optString("text").orEmpty()
-                } else ""
-            }
-            else -> ""
         }
+        return ""
+    }
 
-        return@withContext cleanTagsList(content)
+    private fun cloudHttpError(providerName: String, code: Int, responseBody: String): String {
+        val detail = runCatching {
+            JSONObject(responseBody)
+                .optJSONObject("error")
+                ?.optString("message")
+                ?.takeIf { it.isNotBlank() }
+        }.getOrNull()?.take(220)
+        val detailSuffix = detail?.let { ": $it" }.orEmpty()
+        return when (code) {
+            400 -> "$providerName rejected the image request (HTTP 400)$detailSuffix"
+            401 -> "$providerName rejected the API key (HTTP 401). Check the key."
+            403 -> "$providerName denied access (HTTP 403). Check model access, API permissions, and billing.$detailSuffix"
+            404 -> "$providerName could not find the endpoint or model (HTTP 404). Check the Base URL and Model ID."
+            413 -> "$providerName rejected the image because the request is too large (HTTP 413)."
+            429 -> "$providerName rate limit or quota reached (HTTP 429). Check usage limits."
+            in 500..599 -> "$providerName is temporarily unavailable (HTTP $code)."
+            else -> "$providerName request failed (HTTP $code)$detailSuffix"
+        }
     }
 
     /**
