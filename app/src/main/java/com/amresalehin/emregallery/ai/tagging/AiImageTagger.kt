@@ -219,26 +219,35 @@ object AiImageTagger {
                     else -> null
                 }
                 val modelNameUsed = modelOverride?.ifBlank { null } ?: cloudProvider.modelId.ifBlank { "default" }
-                val cloudResult = runCatching {
+                val cloudEngineName = "Cloud Vision (${cloudProvider.name} • $modelNameUsed)"
+                val cloudResult = try {
                     tagWithCloudVision(context, item, cloudProvider, modelOverride)
-                }.getOrNull()
-
-                val durationMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startNs)
-                if (cloudResult != null && cloudResult.isNotEmpty()) {
-                    return@withContext AiTaggingResult(
-                        tags = cloudResult,
-                        engineName = "Cloud Vision (${cloudProvider.name} • $modelNameUsed)",
-                        durationMs = durationMs
-                    )
-                } else {
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (error: Exception) {
                     return@withContext AiTaggingResult(
                         tags = emptyList(),
-                        engineName = "Cloud Vision (${cloudProvider.name} • $modelNameUsed)",
-                        durationMs = durationMs,
+                        engineName = cloudEngineName,
+                        durationMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startNs),
                         isSuccess = false,
-                        errorMessage = "Cloud AI request returned no tags. Check provider connection and API key."
+                        errorMessage = error.message ?: "Cloud image request failed. Check the provider URL, API key, and model ID."
                     )
                 }
+
+                if (cloudResult.isEmpty()) {
+                    return@withContext AiTaggingResult(
+                        tags = emptyList(),
+                        engineName = cloudEngineName,
+                        durationMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startNs),
+                        isSuccess = false,
+                        errorMessage = "The cloud model returned no usable tags. Confirm that the selected model supports image input."
+                    )
+                }
+                return@withContext AiTaggingResult(
+                    tags = cloudResult,
+                    engineName = cloudEngineName,
+                    durationMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startNs)
+                )
             }
 
             val durationMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startNs)
