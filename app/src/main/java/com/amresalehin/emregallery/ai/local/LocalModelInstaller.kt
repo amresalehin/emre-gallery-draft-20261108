@@ -239,6 +239,64 @@ object LocalModelInstaller {
     fun checkInstallationStatus(context: Context, spec: LocalModelSpec): LocalModelState {
         return checkInstallationStatus(context.filesDir, spec)
     }
+    /**
+     * Re-validates an earlier assets-only installation after a real runtime adapter
+     * becomes available. Existing model/projector files are reused; READY is written
+     * only after the adapter completes an actual image-inference smoke test.
+     */
+    suspend fun validatePreviouslyDownloadedAssets(
+        context: Context,
+        spec: LocalModelSpec
+    ): LocalModelState = withContext(Dispatchers.IO) {
+        if (!spec.hasRuntimeAdapter) {
+            return@withContext checkInstallationStatus(context, spec)
+        }
+
+        val existingState = checkInstallationStatus(context, spec)
+        if (existingState.status != LocalModelStatus.ASSETS_DOWNLOADED_RUNTIME_UNAVAILABLE) {
+            return@withContext existingState
+        }
+
+        val modelDir = getModelDir(context, spec)
+        val validation = LocalModelRuntimeRegistry.validateModel(context, spec, modelDir)
+        if (validation is SmokeTestResult.Failure) {
+            Log.e(TAG, "Existing ${spec.displayName} assets failed runtime validation: ${validation.reason}")
+            return@withContext existingState.copy(
+                status = LocalModelStatus.ERROR,
+                errorMessage = "Existing model files passed artifact checks but runtime validation failed: ${validation.reason}",
+                statusDetail = validation.reason,
+                lastUpdated = System.currentTimeMillis()
+            )
+        }
+
+        val success = validation as SmokeTestResult.Success
+        val now = System.currentTimeMillis()
+        val manifestFiles = listOf(
+            File(modelDir, spec.manifestFileName),
+            File(modelDir, "model_manifest.json")
+        ).distinctBy { it.absolutePath }
+        for (manifestFile in manifestFiles) {
+            if (!manifestFile.isFile) continue
+            val manifest = JSONObject(manifestFile.readText()).apply {
+                put("status", "READY")
+                put("hasRuntimeAdapter", true)
+                put("validatedAt", now)
+                put("statusDetail", success.details)
+            }
+            val temporary = File(modelDir, manifestFile.name + ".tmp")
+            temporary.writeText(manifest.toString(2))
+            if (manifestFile.exists() && !manifestFile.delete()) {
+                temporary.delete()
+                throw IOException("Unable to replace the ${spec.displayName} manifest after runtime validation.")
+            }
+            if (!temporary.renameTo(manifestFile)) {
+                temporary.delete()
+                throw IOException("Unable to commit the ${spec.displayName} runtime-ready manifest.")
+            }
+        }
+
+        checkInstallationStatus(context, spec)
+    }
 
     fun isInstalled(filesDir: File, spec: LocalModelSpec): Boolean {
         val state = checkInstallationStatus(filesDir, spec)
