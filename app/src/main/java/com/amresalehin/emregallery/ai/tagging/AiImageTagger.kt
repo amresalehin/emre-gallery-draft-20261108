@@ -10,6 +10,7 @@ import android.util.Log
 import androidx.exifinterface.media.ExifInterface
 import com.amresalehin.emregallery.ai.local.Gemma4RuntimeAdapter
 import com.amresalehin.emregallery.ai.local.LocalImageTaggingRuntime
+import com.amresalehin.emregallery.ai.local.MiniCpmV46RuntimeAdapter
 import com.amresalehin.emregallery.ai.local.LocalModelInstaller
 import com.amresalehin.emregallery.ai.local.LocalModelRegistry
 import com.amresalehin.emregallery.ai.local.LocalModelRuntimeRegistry
@@ -52,7 +53,7 @@ data class AiTaggingResult(
  * Comprehensive AI Image Tagging Engine.
  * Supports:
  * 1. Cloud Multimodal Vision AI (OpenAI, Groq, Ollama, OpenRouter, Anthropic-compatible endpoints)
- * 2. On-Device Vision-Language Model (Florence-2 Base)
+ * 2. On-device MiniCPM-V 4.6 and Gemma 4 image inference
  * 3. Smart On-Device Vision Analyzer (zero-latency offline analysis of color, scene, EXIF, and OCR features)
  */
 object AiImageTagger {
@@ -119,40 +120,52 @@ object AiImageTagger {
         val localSpec = LocalModelRegistry.findSpec(targetModel)
         if (localSpec != null || LocalModelRegistry.isRetiredLocalModelId(targetModel)) {
             if (localSpec == null) {
-                return@withContext failure("Local model unavailable", "This older local model generation is no longer supported. Select Gemma 4 or a Cloud AI provider.")
-            }
-            if (!localSpec.hasRuntimeAdapter || localSpec.architecture != ModelArchitecture.GEMMA4) {
                 return@withContext failure(
-                    localSpec.displayName,
-                    "${localSpec.displayName} files may be downloaded, but this app does not have an image-inference runtime for that model. No tags were generated."
+                    "Local model unavailable",
+                    "This local model generation is no longer supported. Select an installed local model or configure a Cloud AI provider."
                 )
             }
-            Gemma4RuntimeAdapter.deviceClassRequirementMessage(context)?.let { message ->
-                return@withContext failure("Gemma 4 E2B", message)
+            if (!localSpec.hasRuntimeAdapter) {
+                return@withContext failure(
+                    localSpec.displayName,
+                    "${localSpec.displayName} can be downloaded, but its image-inference runtime is not available in this build. No tags were generated."
+                )
             }
+            if (item.isVideo) {
+                return@withContext failure(localSpec.displayName, "${localSpec.displayName} image tagging currently accepts photos, not video files.")
+            }
+
+            val memoryMessage = when (localSpec.architecture) {
+                ModelArchitecture.GEMMA4 -> Gemma4RuntimeAdapter.deviceClassRequirementMessage(context)
+                ModelArchitecture.MINICPM_V46 -> MiniCpmV46RuntimeAdapter.deviceClassRequirementMessage(context)
+                else -> null
+            }
+            memoryMessage?.let { return@withContext failure(localSpec.displayName, it) }
+
             val installedState = LocalModelInstaller.checkInstallationStatus(context, localSpec)
             if (installedState.status != FlorenceStatus.READY || !installedState.runtimeReady) {
                 val message = installedState.errorMessage ?: installedState.statusDetail
-                    ?: "Gemma 4 E2B is not installed and runtime-validated. Download it in AI Settings first."
-                return@withContext failure("Gemma 4 E2B", message)
-            }
-            if (item.isVideo) {
-                return@withContext failure("Gemma 4 E2B", "Gemma 4 image tagging currently accepts photos, not video files.")
+                    ?: "${localSpec.displayName} is not installed and runtime-validated. Download it in AI Settings first."
+                return@withContext failure(localSpec.displayName, message)
             }
 
             val modelDir = LocalModelInstaller.getModelDir(context, localSpec)
             val runtime = LocalModelRuntimeRegistry.getRuntime(localSpec)
-                ?: return@withContext failure("Gemma 4 E2B", "No LiteRT-LM runtime adapter is registered.")
+                ?: return@withContext failure(localSpec.displayName, "No runtime adapter is registered for this local model.")
             if (!runtime.isReady && !runtime.open(context, modelDir)) {
-                val message = (runtime as? Gemma4RuntimeAdapter)?.lastErrorMessage
-                    ?: "LiteRT-LM could not initialize Gemma 4 on this device."
+                val message = when (runtime) {
+                    is Gemma4RuntimeAdapter -> runtime.lastErrorMessage
+                    is MiniCpmV46RuntimeAdapter -> runtime.lastErrorMessage
+                    else -> null
+                } ?: "The selected local model could not initialize on this device."
                 LocalModelRuntimeRegistry.closeRuntime(localSpec.id)
-                return@withContext failure("Gemma 4 E2B", message)
+                return@withContext failure(localSpec.displayName, message)
             }
             val imageRuntime = runtime as? LocalImageTaggingRuntime
-                ?: return@withContext failure("Gemma 4 E2B", "The selected runtime does not expose image-to-text inference.")
-            val bitmap = loadSampledBitmap(context, Uri.parse(item.uri), maxDimension = 448)
-                ?: return@withContext failure("Gemma 4 E2B", "The image could not be decoded from the media URI.")
+                ?: return@withContext failure(localSpec.displayName, "The selected runtime does not expose image-to-text inference.")
+            val maxDimension = if (localSpec.architecture == ModelArchitecture.MINICPM_V46) 768 else 448
+            val bitmap = loadSampledBitmap(context, Uri.parse(item.uri), maxDimension)
+                ?: return@withContext failure(localSpec.displayName, "The image could not be decoded from the media URI.")
             try {
                 val imageBytes = ByteArrayOutputStream().use { output ->
                     bitmap.compress(Bitmap.CompressFormat.JPEG, 85, output)
@@ -161,11 +174,14 @@ object AiImageTagger {
                 try {
                     val tags = cleanTagsList(imageRuntime.generateImageTags(imageBytes))
                     if (tags.isEmpty()) {
-                        return@withContext failure("Gemma 4 E2B", "Gemma 4 returned no usable image tags. No placeholder tags were saved.")
+                        return@withContext failure(
+                            localSpec.displayName,
+                            "${localSpec.displayName} returned no usable image tags. No placeholder tags were saved."
+                        )
                     }
                     return@withContext AiTaggingResult(
                         tags = tags,
-                        engineName = "Gemma 4 E2B (On-device)",
+                        engineName = "${localSpec.displayName} (On-device)",
                         durationMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startNs)
                     )
                 } finally {
@@ -174,7 +190,10 @@ object AiImageTagger {
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (error: Throwable) {
-                return@withContext failure("Gemma 4 E2B", "Local image inference failed: ${error.message ?: error.javaClass.simpleName}")
+                return@withContext failure(
+                    localSpec.displayName,
+                    "Local image inference failed: ${error.message ?: error.javaClass.simpleName}"
+                )
             } finally {
                 bitmap.recycle()
             }
