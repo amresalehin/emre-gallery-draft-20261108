@@ -2,6 +2,8 @@ package com.amresalehin.emregallery
 
 import com.amresalehin.emregallery.ai.local.ArtifactRole
 import com.amresalehin.emregallery.ai.local.MiniCpmV46RuntimeAdapter
+import com.amresalehin.emregallery.ai.local.Lfm25VlRuntimeAdapter
+import com.amresalehin.emregallery.ai.local.LocalModelRuntimeRegistry
 import com.amresalehin.emregallery.ai.local.LocalModelArtifact
 import com.amresalehin.emregallery.ai.local.LocalModelDownloadManager
 import com.amresalehin.emregallery.ai.local.LocalModelInstaller
@@ -256,7 +258,7 @@ class AiConfigurationTest {
         assertEquals(ModelTaskType.VISION_LANGUAGE, lfm.taskType)
         assertEquals(ModelArchitecture.LFM2_5, lfm.architecture)
         assertEquals("lfm1.0", lfm.license)
-        assertFalse("LFM2.5 runtime adapter not active yet", lfm.hasRuntimeAdapter)
+        assertTrue("LFM2.5 must have a registered image-inference runtime", lfm.hasRuntimeAdapter)
 
         assertEquals(2, lfm.artifacts.size)
         val model = lfm.artifacts.firstOrNull { it.role == ArtifactRole.GGUF_MODEL }
@@ -267,6 +269,23 @@ class AiConfigurationTest {
         assertEquals("mmproj-LFM2.5-VL-450M-Extract-Q8_0.gguf", mmproj?.relativePath)
         assertEquals(240_668_768L, model?.exactBytes)
         assertEquals(108_136_832L, mmproj?.exactBytes)
+    }
+    @Test
+    fun testLfm25RuntimeRegistrationAndStructuredOutputMapping() {
+        val spec = LocalModelRegistry.LFM2_5_SPEC
+        assertTrue(spec.hasRuntimeAdapter)
+        assertTrue(
+            "LFM2.5 must resolve to its own MTMD runtime adapter",
+            LocalModelRuntimeRegistry.getRuntime(spec) is Lfm25VlRuntimeAdapter
+        )
+
+        val tags = Lfm25VlRuntimeAdapter.parseStructuredResponse(
+            """{"subjects":"red bicycle, person","scene":"city street","activities":["cycling","walking"],"visual_attributes":"red frame, green trees","visible_text":""}"""
+        )
+        assertTrue(tags.contains("red bicycle"))
+        assertTrue(tags.contains("city street"))
+        assertTrue(tags.contains("cycling"))
+        assertTrue(tags.contains("green trees"))
     }
 
     @Test
