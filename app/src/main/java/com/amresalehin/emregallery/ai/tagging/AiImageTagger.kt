@@ -284,138 +284,148 @@ object AiImageTagger {
         imageBytes: ByteArray,
         modelOverride: String? = null
     ): List<String> = withContext(Dispatchers.IO) {
-        val base64Image = encodeBase64(imageBytes)
+        if (imageBytes.isEmpty()) throw IOException("The image payload is empty.")
 
         val rawBase = provider.baseUrl.trim().trimEnd('/')
-        val modelToUse = modelOverride?.takeIf { it.isNotBlank() && it != "cloud" && !it.startsWith("cloud_") && it != provider.id }
-            ?: provider.modelId.ifBlank { "gpt-4o-mini" }
+        if (rawBase.isBlank()) throw IOException("Cloud provider Base URL cannot be blank.")
+        val normalizedBase = when {
+            rawBase.startsWith("https://", ignoreCase = true) || rawBase.startsWith("http://", ignoreCase = true) -> rawBase
+            else -> "https://$rawBase"
+        }
 
-        // Check if this is a native Google Gemini endpoint (generativelanguage.googleapis.com without /openai)
-        val isNativeGemini = rawBase.contains("generativelanguage.googleapis.com", ignoreCase = true) &&
-                !rawBase.contains("/openai", ignoreCase = true)
+        val modelToUse = modelOverride?.takeIf {
+            it.isNotBlank() && it != "cloud" && !it.startsWith("cloud_") && it != provider.id
+        } ?: provider.modelId.ifBlank {
+            if (normalizedBase.contains("generativelanguage.googleapis.com", ignoreCase = true)) "gemini-2.5-flash"
+            else "gpt-6.1-sol"
+        }
+        val base64Image = encodeBase64(imageBytes)
+        val prompt = "Inspect this image and return 4 to 8 concise, lowercase search tags. " +
+            "Describe only clearly visible subjects, objects, setting, activity, and visual style. " +
+            "Do not infer identities or hidden context. Return only comma-separated tags, with no explanation."
 
-        if (isNativeGemini) {
-            val geminiModel = if (modelToUse.contains("/")) modelToUse.substringAfterLast('/') else modelToUse
-            val geminiUrl = if (rawBase.contains(":generateContent")) {
-                if (!rawBase.contains("key=")) "$rawBase?key=${provider.apiKey.trim()}" else rawBase
-            } else {
-                val cleanBase = if (rawBase.endsWith("/v1beta") || rawBase.endsWith("/v1")) rawBase else "$rawBase/v1beta"
-                "$cleanBase/models/$geminiModel:generateContent?key=${provider.apiKey.trim()}"
+        val isNativeGemini = normalizedBase.contains("generativelanguage.googleapis.com", ignoreCase = true) &&
+            !normalizedBase.contains("/openai", ignoreCase = true)
+
+        val request = if (isNativeGemini) {
+            if (provider.apiKey.isBlank()) {
+                throw IOException("Google Gemini requires an API key. Add a Gemini API key and save the provider.")
             }
-
-            val requestPayload = JSONObject().apply {
-                put("contents", JSONArray().apply {
-                    put(JSONObject().apply {
-                        put("parts", JSONArray().apply {
-                            put(JSONObject().apply {
-                                put("text", "Generate 4 to 8 concise, specific, lowercase keyword tags describing the subjects, setting, style, and objects in this photo. Return ONLY a comma-separated list of tags, without explanation or markdown.")
-                            })
-                            put(JSONObject().apply {
-                                put("inline_data", JSONObject().apply {
-                                    put("mime_type", "image/jpeg")
-                                    put("data", base64Image)
-                                })
-                            })
-                        })
-                    })
+            val geminiModel = modelToUse.removePrefix("models/").substringAfterLast('/')
+            val endpoint = when {
+                normalizedBase.endsWith(":generateContent", ignoreCase = true) -> normalizedBase
+                Regex("/models/[^/]+:generateContent$", RegexOption.IGNORE_CASE).containsMatchIn(normalizedBase) -> normalizedBase
+                normalizedBase.endsWith("/v1beta", ignoreCase = true) || normalizedBase.endsWith("/v1", ignoreCase = true) ->
+                    "$normalizedBase/models/$geminiModel:generateContent"
+                else -> "$normalizedBase/v1beta/models/$geminiModel:generateContent"
+            }
+            val payload = JSONObject().apply {
+                put("contents", JSONArray().put(JSONObject().apply {
+                    put("parts", JSONArray()
+                        .put(JSONObject().put("text", prompt))
+                        .put(JSONObject().put("inline_data", JSONObject().apply {
+                            put("mime_type", "image/jpeg")
+                            put("data", base64Image)
+                        }))
+                    )
+                }))
+                put("generationConfig", JSONObject().apply {
+                    put("temperature", 0.2)
+                    put("maxOutputTokens", 160)
                 })
             }
-
-            val reqBuilder = Request.Builder()
-                .url(geminiUrl)
-                .post(requestPayload.toString().toRequestBody("application/json".toMediaType()))
-
-            val response = try {
-                httpClient.newCall(reqBuilder.build()).execute()
-            } catch (e: Exception) {
-                null
+            Request.Builder()
+                .url(endpoint)
+                .header("x-goog-api-key", provider.apiKey.trim())
+                .post(payload.toString().toRequestBody("application/json".toMediaType()))
+                .build()
+        } else {
+            val endpoint = when {
+                normalizedBase.endsWith("/chat/completions", ignoreCase = true) -> normalizedBase
+                listOf("/v1", "/v1beta/openai", "/openai/v1", "/openai", "/api/v1", "/api/openai/v1")
+                    .any { normalizedBase.endsWith(it, ignoreCase = true) } -> "$normalizedBase/chat/completions"
+                else -> "$normalizedBase/v1/chat/completions"
             }
-
-            if (response != null && response.isSuccessful) {
-                val responseBody = response.body?.string().orEmpty()
-                response.close()
-                if (responseBody.isNotBlank()) {
-                    val parsedJson = JSONObject(responseBody)
-                    val candidates = parsedJson.optJSONArray("candidates")
-                    if (candidates != null && candidates.length() > 0) {
-                        val parts = candidates.getJSONObject(0).optJSONObject("content")?.optJSONArray("parts")
-                        val text = parts?.optJSONObject(0)?.optString("text").orEmpty()
-                        if (text.isNotBlank()) {
-                            return@withContext cleanTagsList(text)
-                        }
-                    }
-                }
-            } else {
-                response?.close()
-            }
-        }
-
-        // Standard OpenAI-compatible /chat/completions endpoint
-        val endpoint = when {
-            rawBase.endsWith("/chat/completions", ignoreCase = true) -> rawBase
-            rawBase.endsWith("/v1", ignoreCase = true) -> "$rawBase/chat/completions"
-            else -> "$rawBase/v1/chat/completions"
-        }
-
-        val requestPayload = JSONObject().apply {
-            put("model", modelToUse)
-            put("messages", JSONArray().apply {
-                put(JSONObject().apply {
+            val payload = JSONObject().apply {
+                put("model", modelToUse)
+                put("messages", JSONArray().put(JSONObject().apply {
                     put("role", "user")
-                    put("content", JSONArray().apply {
-                        put(JSONObject().apply {
+                    put("content", JSONArray()
+                        .put(JSONObject().apply {
                             put("type", "text")
-                            put("text", "Generate 4 to 8 concise, specific, lowercase keyword tags describing the subjects, setting, style, and objects in this photo (e.g. sunset, beach, ocean, landscape, nature, portrait, food, architecture, document). Return ONLY a comma-separated list of tags, without explanation or markdown.")
+                            put("text", prompt)
                         })
-                        put(JSONObject().apply {
+                        .put(JSONObject().apply {
                             put("type", "image_url")
-                            put("image_url", JSONObject().apply {
-                                put("url", "data:image/jpeg;base64,$base64Image")
-                            })
+                            put("image_url", JSONObject().put("url", "data:image/jpeg;base64,$base64Image"))
                         })
-                    })
-                })
-            })
-            put("max_tokens", 80)
-            put("temperature", 0.2)
-        }
-
-        val reqBuilder = Request.Builder()
-            .url(endpoint)
-            .post(requestPayload.toString().toRequestBody("application/json".toMediaType()))
-
-        if (provider.apiKey.isNotBlank()) {
-            reqBuilder.header("Authorization", "Bearer ${provider.apiKey.trim()}")
-        }
-
-        val response = httpClient.newCall(reqBuilder.build()).execute()
-        val responseBody = response.body?.string().orEmpty()
-        response.close()
-
-        if (!response.isSuccessful || responseBody.isBlank()) {
-            runCatching { Log.w(TAG, "Cloud tagging returned status ${response.code}: $responseBody") }
-            return@withContext emptyList()
-        }
-
-        val parsedJson = JSONObject(responseBody)
-        val content = when {
-            parsedJson.has("choices") -> {
-                val choices = parsedJson.optJSONArray("choices")
-                if (choices != null && choices.length() > 0) {
-                    choices.getJSONObject(0).optJSONObject("message")?.optString("content").orEmpty()
-                } else ""
+                    )
+                }))
+                put("max_tokens", 160)
+                put("temperature", 0.2)
             }
-            parsedJson.has("candidates") -> {
-                val candidates = parsedJson.optJSONArray("candidates")
-                if (candidates != null && candidates.length() > 0) {
-                    val parts = candidates.getJSONObject(0).optJSONObject("content")?.optJSONArray("parts")
-                    parts?.optJSONObject(0)?.optString("text").orEmpty()
-                } else ""
+            val builder = Request.Builder()
+                .url(endpoint)
+                .post(payload.toString().toRequestBody("application/json".toMediaType()))
+            if (provider.apiKey.isNotBlank()) builder.header("Authorization", "Bearer ${provider.apiKey.trim()}")
+            builder.build()
+        }
+
+        val response = httpClient.newCall(request).execute()
+        val responseBody = response.use { it.body?.string().orEmpty() }
+        if (!response.isSuccessful) {
+            val errorPayload = runCatching { JSONObject(responseBody) }.getOrNull()
+            val message = errorPayload?.optJSONObject("error")?.optString("message").orEmpty()
+            val suffix = message.takeIf { it.isNotBlank() }?.let { ": $it" }.orEmpty()
+            val detail = when (response.code) {
+                400 -> "rejected the image request"
+                401 -> "rejected the API key"
+                403 -> "denied access; check model permissions and billing"
+                404 -> "could not find the endpoint or model"
+                413 -> "rejected the image because the request is too large"
+                429 -> "rate limit or quota reached"
+                in 500..599 -> "is temporarily unavailable"
+                else -> "request failed"
+            }
+            throw IOException("${provider.name} $detail (HTTP ${response.code})$suffix")
+        }
+        if (responseBody.isBlank()) throw IOException("Cloud provider returned an empty response.")
+
+        val parsed = try {
+            JSONObject(responseBody)
+        } catch (error: Exception) {
+            throw IOException("Cloud provider returned invalid JSON: ${error.message ?: "unparseable response"}")
+        }
+        val responseText = when {
+            parsed.optString("output_text").isNotBlank() -> parsed.optString("output_text")
+            parsed.optJSONArray("choices")?.optJSONObject(0) != null -> {
+                val content = parsed.optJSONArray("choices")!!.optJSONObject(0)!!
+                    .optJSONObject("message")?.opt("content")
+                when (content) {
+                    is String -> content
+                    is JSONArray -> (0 until content.length()).mapNotNull { index ->
+                        content.optJSONObject(index)?.optString("text")?.takeIf { it.isNotBlank() }
+                    }.joinToString("\n")
+                    else -> ""
+                }
+            }
+            parsed.optJSONArray("candidates")?.optJSONObject(0) != null -> {
+                val parts = parsed.optJSONArray("candidates")!!.optJSONObject(0)!!
+                    .optJSONObject("content")?.optJSONArray("parts")
+                (0 until (parts?.length() ?: 0)).mapNotNull { index ->
+                    parts?.optJSONObject(index)?.optString("text")?.takeIf { it.isNotBlank() }
+                }.joinToString("\n")
             }
             else -> ""
         }
-
-        return@withContext cleanTagsList(content)
+        val tags = cleanTagsList(responseText)
+        if (tags.isEmpty()) {
+            val message = parsed.optJSONObject("error")?.optString("message").orEmpty()
+            throw IOException(message.ifBlank {
+                "The selected model returned no usable tags. Check the model ID and confirm that it supports image input."
+            })
+        }
+        tags
     }
 
     /**
