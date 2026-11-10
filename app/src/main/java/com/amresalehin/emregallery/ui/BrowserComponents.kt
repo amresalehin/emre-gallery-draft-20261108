@@ -1,5 +1,6 @@
 package com.amresalehin.emregallery.ui
 
+import coil.compose.AsyncImage
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.BorderStroke
@@ -1560,6 +1561,7 @@ fun BrowserHistoryBottomSheet(
 fun BrowserTabsBottomSheet(
     tabs: List<BrowserTabItem>,
     currentUrl: String,
+    activeTabId: String? = null,
     onSelectTab: (BrowserTabItem) -> Unit,
     onCloseTab: (String) -> Unit,
     onNewTab: () -> Unit,
@@ -1576,6 +1578,7 @@ fun BrowserTabsBottomSheet(
                 .fillMaxWidth()
                 .fillMaxHeight(0.75f)
                 .padding(horizontal = 20.dp, vertical = 8.dp)
+                .testTag("browser_tabs_bottom_sheet")
         ) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -1594,7 +1597,8 @@ fun BrowserTabsBottomSheet(
                         onDismiss()
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = BrowserThemeColors.textPrimary(isDark)),
-                    shape = RoundedCornerShape(14.dp)
+                    shape = RoundedCornerShape(14.dp),
+                    modifier = Modifier.testTag("browser_new_tab_button")
                 ) {
                     Icon(Icons.Default.Add, contentDescription = null, tint = BrowserThemeColors.background(isDark), modifier = Modifier.size(18.dp))
                     Spacer(Modifier.width(6.dp))
@@ -1623,7 +1627,25 @@ fun BrowserTabsBottomSheet(
                     modifier = Modifier.fillMaxSize()
                 ) {
                     items(tabs, key = { it.id }) { tab ->
-                        val isSelected = tab.url.equals(currentUrl, ignoreCase = true)
+                        val isSelected = if (!activeTabId.isNullOrBlank()) {
+                            tab.id == activeTabId
+                        } else {
+                            tab.url.isNotBlank() && tab.url.equals(currentUrl, ignoreCase = true)
+                        }
+
+                        val domain = remember(tab.url) {
+                            if (tab.url.isNotBlank()) {
+                                try {
+                                    java.net.URL(tab.url).host.removePrefix("www.")
+                                } catch (_: Exception) {
+                                    tab.url.substringAfter("://").substringBefore("/").removePrefix("www.")
+                                }
+                            } else ""
+                        }
+                        val faviconUrl = remember(domain) {
+                            if (domain.isNotBlank()) "https://www.google.com/s2/favicons?domain=$domain&sz=64" else ""
+                        }
+
                         Surface(
                             shape = RoundedCornerShape(16.dp),
                             color = BrowserThemeColors.itemSurface(isDark),
@@ -1633,11 +1655,12 @@ fun BrowserTabsBottomSheet(
                             ),
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .height(120.dp)
+                                .height(128.dp)
                                 .clickable {
                                     onSelectTab(tab)
                                     onDismiss()
                                 }
+                                .testTag("browser_tab_card_${tab.id}")
                         ) {
                             Column(
                                 modifier = Modifier
@@ -1650,34 +1673,52 @@ fun BrowserTabsBottomSheet(
                                     horizontalArrangement = Arrangement.SpaceBetween,
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    Text(
-                                        text = tab.title.ifBlank { "New Tab" },
-                                        fontSize = 13.sp,
-                                        fontWeight = FontWeight.SemiBold,
-                                        color = BrowserThemeColors.textPrimary(isDark),
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis,
-                                        modifier = Modifier.weight(1f)
-                                    )
-                                    if (tabs.size > 1) {
-                                        IconButton(
-                                            onClick = { onCloseTab(tab.id) },
-                                            modifier = Modifier.size(24.dp)
-                                        ) {
+                                    Row(
+                                        modifier = Modifier.weight(1f),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                    ) {
+                                        if (faviconUrl.isNotBlank()) {
+                                            AsyncImage(
+                                                model = faviconUrl,
+                                                contentDescription = null,
+                                                modifier = Modifier.size(16.dp).clip(CircleShape)
+                                            )
+                                        } else {
                                             Icon(
-                                                imageVector = Icons.Default.Close,
-                                                contentDescription = "Close tab",
+                                                imageVector = if (tab.url.isBlank()) Icons.Default.Home else Icons.Default.Public,
+                                                contentDescription = null,
                                                 tint = BrowserThemeColors.iconTint(isDark),
-                                                modifier = Modifier.size(15.dp)
+                                                modifier = Modifier.size(16.dp)
                                             )
                                         }
+                                        Text(
+                                            text = tab.title.ifBlank { if (tab.url.isBlank()) "Home" else "New Tab" },
+                                            fontSize = 13.sp,
+                                            fontWeight = FontWeight.SemiBold,
+                                            color = BrowserThemeColors.textPrimary(isDark),
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                    }
+
+                                    IconButton(
+                                        onClick = { onCloseTab(tab.id) },
+                                        modifier = Modifier.size(24.dp).testTag("browser_tab_close_${tab.id}")
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Close,
+                                            contentDescription = "Close tab",
+                                            tint = BrowserThemeColors.iconTint(isDark),
+                                            modifier = Modifier.size(15.dp)
+                                        )
                                     }
                                 }
 
                                 Box(
                                     modifier = Modifier
                                         .fillMaxWidth()
-                                        .height(48.dp)
+                                        .height(46.dp)
                                         .background(BrowserThemeColors.cardSurface(isDark), RoundedCornerShape(10.dp))
                                         .border(1.dp, BrowserThemeColors.cardOutline(isDark), RoundedCornerShape(10.dp))
                                         .padding(6.dp),
@@ -1691,6 +1732,22 @@ fun BrowserTabsBottomSheet(
                                         overflow = TextOverflow.Ellipsis,
                                         textAlign = TextAlign.Center
                                     )
+                                }
+
+                                if (isSelected) {
+                                    Surface(
+                                        shape = RoundedCornerShape(6.dp),
+                                        color = BrowserThemeColors.textPrimary(isDark),
+                                        modifier = Modifier.align(Alignment.Start)
+                                    ) {
+                                        Text(
+                                            text = "ACTIVE",
+                                            fontSize = 9.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = BrowserThemeColors.background(isDark),
+                                            modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp)
+                                        )
+                                    }
                                 }
                             }
                         }

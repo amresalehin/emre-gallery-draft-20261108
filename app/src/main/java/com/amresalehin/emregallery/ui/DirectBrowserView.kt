@@ -122,6 +122,51 @@ fun DirectBrowserView(
     var showHistorySheet by remember { mutableStateOf(false) }
     var showTabsSheet by remember { mutableStateOf(false) }
     var showSettingsSheet by remember { mutableStateOf(false) }
+    var activeTabId by remember { mutableStateOf<String?>(null) }
+
+    LaunchedEffect(tabsList) {
+        if (tabsList.isEmpty()) {
+            val newId = "tab_${System.currentTimeMillis()}"
+            val initialTab = BrowserTabItem(
+                id = newId,
+                title = if (pageTitle.isNotBlank()) pageTitle else if (currentUrl.isNotBlank()) MediaClassifier.cleanDomainFromUrl(currentUrl) else "Home",
+                url = currentUrl
+            )
+            activeTabId = newId
+            historyManager.saveTabs(listOf(initialTab))
+        } else if (activeTabId == null || tabsList.none { it.id == activeTabId }) {
+            val matching = tabsList.firstOrNull { it.url.isNotBlank() && it.url.equals(currentUrl, ignoreCase = true) }
+                ?: tabsList.first()
+            activeTabId = matching.id
+        }
+    }
+
+    fun syncCurrentTabWithPage(targetUrl: String, targetTitle: String) {
+        val tabId = activeTabId ?: return
+        val currentTabs = tabsList
+        val existing = currentTabs.firstOrNull { it.id == tabId }
+        val displayTitle = if (targetTitle.isNotBlank() && targetTitle != "about:blank") {
+            targetTitle
+        } else if (targetUrl.isNotBlank() && targetUrl != "about:blank") {
+            MediaClassifier.cleanDomainFromUrl(targetUrl)
+        } else {
+            "Home"
+        }
+        val cleanUrl = if (targetUrl == "about:blank") "" else targetUrl
+        if (existing == null || existing.url != cleanUrl || existing.title != displayTitle) {
+            val updatedTabs = if (existing == null) {
+                currentTabs + BrowserTabItem(id = tabId, title = displayTitle, url = cleanUrl)
+            } else {
+                currentTabs.map {
+                    if (it.id == tabId) it.copy(title = displayTitle, url = cleanUrl, timestamp = System.currentTimeMillis())
+                    else it
+                }
+            }
+            coroutineScope.launch {
+                historyManager.saveTabs(updatedTabs)
+            }
+        }
+    }
 
     val currentView = LocalView.current
     DisposableEffect(isDark) {
@@ -197,6 +242,7 @@ fun DirectBrowserView(
         onUrlChange?.invoke(formatted)
         tabSession.updateNavigation(formatted, pageTitle)
         DownloaderSession.updateBrowserPage(formatted)
+        syncCurrentTabWithPage(formatted, pageTitle)
         coroutineScope.launch {
             historyManager.recordVisit(formatted)
         }
@@ -252,6 +298,9 @@ fun DirectBrowserView(
                 },
                 discoveredCount = totalDetectedCount,
                 onNewTabClick = {
+                    val newId = "tab_${System.currentTimeMillis()}"
+                    val newTab = BrowserTabItem(id = newId, title = "New Tab", url = "")
+                    activeTabId = newId
                     currentUrl = ""
                     addressInput = ""
                     pageTitle = ""
@@ -261,6 +310,9 @@ fun DirectBrowserView(
                     DownloaderSession.clear()
                     scrollHandler.show()
                     webViewInstance?.loadUrl("about:blank")
+                    coroutineScope.launch {
+                        historyManager.saveTabs(tabsList + newTab)
+                    }
                 },
                 onReloadClick = {
                     if (isLoading) webViewInstance?.stopLoading() else webViewInstance?.reload()
@@ -542,6 +594,9 @@ fun DirectBrowserView(
                                     pageTitle = title.orEmpty()
                                     onPageTitleChanged?.invoke(pageTitle)
                                     tabSession.updateNavigation(currentUrl, pageTitle)
+                                    if (currentUrl.isNotBlank() && currentUrl != "about:blank") {
+                                        syncCurrentTabWithPage(currentUrl, pageTitle)
+                                    }
                                 }
                             }
 
@@ -645,6 +700,7 @@ fun DirectBrowserView(
                                         isLoading = false
                                         canGoBack = false
                                         canGoForward = false
+                                        syncCurrentTabWithPage("", "Home")
                                         return
                                     }
                                     tabSession.clearMedia()
@@ -656,6 +712,7 @@ fun DirectBrowserView(
                                     onUrlChange?.invoke(url)
                                     tabSession.updateNavigation(url, pageTitle)
                                     DownloaderSession.updateBrowserPage(url)
+                                    syncCurrentTabWithPage(url, pageTitle)
                                     canGoBack = view?.canGoBack() == true
                                     canGoForward = view?.canGoForward() == true
                                 }
@@ -666,6 +723,7 @@ fun DirectBrowserView(
                                         tabSession.updateNavigation("")
                                         canGoBack = false
                                         canGoForward = false
+                                        syncCurrentTabWithPage("", "Home")
                                         return
                                     }
                                     BotDetectionMitigator.injectStealth(view)
@@ -673,7 +731,10 @@ fun DirectBrowserView(
                                     currentUrl = url
                                     addressInput = url
                                     onUrlChange?.invoke(url)
-                                    tabSession.updateNavigation(url, view?.title)
+                                    val finalTitle = view?.title.orEmpty().ifBlank { pageTitle }
+                                    pageTitle = finalTitle
+                                    tabSession.updateNavigation(url, finalTitle)
+                                    syncCurrentTabWithPage(url, finalTitle)
                                     coroutineScope.launch {
                                         historyManager.recordVisit(url, view?.title)
                                     }
@@ -841,31 +902,79 @@ fun DirectBrowserView(
         BrowserTabsBottomSheet(
             tabs = tabsList,
             currentUrl = currentUrl,
+            activeTabId = activeTabId,
             onSelectTab = { tab ->
+                activeTabId = tab.id
+                currentUrl = tab.url
+                addressInput = tab.url
+                pageTitle = tab.title
+                onUrlChange?.invoke(tab.url)
+                tabSession.clearMedia()
+                tabSession.updateNavigation(tab.url, tab.title)
+                DownloaderSession.clear()
+                scrollHandler.show()
                 if (tab.url.isNotBlank()) {
-                    navigateToUrl(tab.url)
+                    webViewInstance?.loadUrl(tab.url)
                 } else {
-                    currentUrl = ""
-                    addressInput = ""
-                    pageTitle = ""
                     webViewInstance?.loadUrl("about:blank")
                 }
             },
             onCloseTab = { tabId ->
                 val remaining = tabsList.filter { it.id != tabId }
-                coroutineScope.launch {
-                    historyManager.saveTabs(remaining)
+                if (remaining.isEmpty()) {
+                    val freshId = "tab_${System.currentTimeMillis()}"
+                    val freshTab = BrowserTabItem(id = freshId, title = "New Tab", url = "")
+                    activeTabId = freshId
+                    currentUrl = ""
+                    addressInput = ""
+                    pageTitle = ""
+                    onUrlChange?.invoke("")
+                    tabSession.clearMedia()
+                    tabSession.updateNavigation("")
+                    DownloaderSession.clear()
+                    scrollHandler.show()
+                    webViewInstance?.loadUrl("about:blank")
+                    coroutineScope.launch {
+                        historyManager.saveTabs(listOf(freshTab))
+                    }
+                } else {
+                    if (activeTabId == tabId) {
+                        val nextTab = remaining.last()
+                        activeTabId = nextTab.id
+                        currentUrl = nextTab.url
+                        addressInput = nextTab.url
+                        pageTitle = nextTab.title
+                        onUrlChange?.invoke(nextTab.url)
+                        tabSession.clearMedia()
+                        tabSession.updateNavigation(nextTab.url, nextTab.title)
+                        DownloaderSession.clear()
+                        scrollHandler.show()
+                        if (nextTab.url.isNotBlank()) {
+                            webViewInstance?.loadUrl(nextTab.url)
+                        } else {
+                            webViewInstance?.loadUrl("about:blank")
+                        }
+                    }
+                    coroutineScope.launch {
+                        historyManager.saveTabs(remaining)
+                    }
                 }
             },
             onNewTab = {
+                val newId = "tab_${System.currentTimeMillis()}"
+                val newTab = BrowserTabItem(id = newId, title = "New Tab", url = "")
+                activeTabId = newId
                 currentUrl = ""
                 addressInput = ""
                 pageTitle = ""
                 onUrlChange?.invoke("")
+                tabSession.clearMedia()
+                tabSession.updateNavigation("")
+                DownloaderSession.clear()
+                scrollHandler.show()
                 webViewInstance?.loadUrl("about:blank")
-                val newTabs = tabsList + BrowserTabItem("tab_${System.currentTimeMillis()}", "New Tab", "")
                 coroutineScope.launch {
-                    historyManager.saveTabs(newTabs)
+                    historyManager.saveTabs(tabsList + newTab)
                 }
             },
             onDismiss = { showTabsSheet = false },

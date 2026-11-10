@@ -172,13 +172,13 @@ class BrowserHistoryManager(private val context: Context) {
         }
     }
 
-    // 2. Open Tabs (Real user tabs only, empty by default)
-    val defaultTabs: List<BrowserTabItem> = emptyList()
+    // 2. Open Tabs (Real user tabs with initial Home tab)
+    val defaultTabs: List<BrowserTabItem> = listOf(BrowserTabItem("tab_default", "Home", ""))
 
     val openTabs: Flow<List<BrowserTabItem>> = context.galleryDataStore.data.map { prefs ->
         val raw = prefs[tabsKey]
         if (raw.isNullOrBlank()) {
-            emptyList()
+            listOf(BrowserTabItem("tab_default", "Home", ""))
         } else {
             try {
                 val array = JSONArray(raw)
@@ -188,23 +188,90 @@ class BrowserHistoryManager(private val context: Context) {
                     list.add(
                         BrowserTabItem(
                             id = obj.optString("id", UUID.randomUUID().toString()),
-                            title = obj.optString("title", "Tab"),
+                            title = obj.optString("title", "New Tab"),
                             url = obj.optString("url", ""),
                             timestamp = obj.optLong("time", System.currentTimeMillis())
                         )
                     )
                 }
-                list
+                if (list.isEmpty()) {
+                    listOf(BrowserTabItem("tab_default", "Home", ""))
+                } else {
+                    list
+                }
             } catch (_: Exception) {
-                emptyList()
+                listOf(BrowserTabItem("tab_default", "Home", ""))
             }
         }
     }.distinctUntilChanged()
 
     suspend fun saveTabs(tabs: List<BrowserTabItem>) {
+        val safeList = if (tabs.isEmpty()) {
+            listOf(BrowserTabItem("tab_default", "Home", ""))
+        } else tabs
+
         context.galleryDataStore.edit { prefs ->
             val array = JSONArray()
-            for (tab in tabs) {
+            for (tab in safeList) {
+                val obj = JSONObject()
+                obj.put("id", tab.id)
+                obj.put("title", tab.title.ifBlank { if (tab.url.isBlank()) "Home" else "New Tab" })
+                obj.put("url", tab.url)
+                obj.put("time", tab.timestamp)
+                array.put(obj)
+            }
+            prefs[tabsKey] = array.toString()
+        }
+    }
+
+    suspend fun updateTab(tabId: String, title: String? = null, url: String? = null) {
+        if (tabId.isBlank()) return
+        context.galleryDataStore.edit { prefs ->
+            val raw = prefs[tabsKey]
+            val list = if (raw.isNullOrBlank()) {
+                mutableListOf(BrowserTabItem("tab_default", "Home", ""))
+            } else {
+                try {
+                    val array = JSONArray(raw)
+                    val l = mutableListOf<BrowserTabItem>()
+                    for (i in 0 until array.length()) {
+                        val obj = array.getJSONObject(i)
+                        l.add(
+                            BrowserTabItem(
+                                id = obj.optString("id", UUID.randomUUID().toString()),
+                                title = obj.optString("title", "New Tab"),
+                                url = obj.optString("url", ""),
+                                timestamp = obj.optLong("time", System.currentTimeMillis())
+                            )
+                        )
+                    }
+                    if (l.isEmpty()) mutableListOf(BrowserTabItem("tab_default", "Home", "")) else l
+                } catch (_: Exception) {
+                    mutableListOf(BrowserTabItem("tab_default", "Home", ""))
+                }
+            }
+            val index = list.indexOfFirst { it.id == tabId }
+            if (index >= 0) {
+                val existing = list[index]
+                val newUrl = url ?: existing.url
+                val newTitle = title ?: existing.title
+                list[index] = existing.copy(
+                    title = newTitle.ifBlank { if (newUrl.isNotBlank()) MediaClassifier.cleanDomainFromUrl(newUrl) else "Home" },
+                    url = newUrl,
+                    timestamp = System.currentTimeMillis()
+                )
+            } else {
+                list.add(
+                    BrowserTabItem(
+                        id = tabId,
+                        title = title ?: if (url?.isNotBlank() == true) MediaClassifier.cleanDomainFromUrl(url) else "Home",
+                        url = url ?: "",
+                        timestamp = System.currentTimeMillis()
+                    )
+                )
+            }
+            val array = JSONArray()
+            for (tab in list) {
                 val obj = JSONObject()
                 obj.put("id", tab.id)
                 obj.put("title", tab.title)
