@@ -21,7 +21,7 @@ object LocalModelManager {
         val url: String,
         val estimatedSize: Long,
         val exactBytes: Long? = null,
-        val role: String = "ONNX_GRAPH",
+        val role: String = "MODEL_ARTIFACT",
         val externalDataFor: String? = null
     )
 
