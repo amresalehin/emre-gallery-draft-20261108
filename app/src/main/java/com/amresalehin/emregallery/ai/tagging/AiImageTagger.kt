@@ -16,7 +16,7 @@ import com.amresalehin.emregallery.ai.local.LocalModelRegistry
 import com.amresalehin.emregallery.ai.local.LocalModelRuntimeRegistry
 import com.amresalehin.emregallery.ai.local.ModelArchitecture
 import com.amresalehin.emregallery.data.CloudAiProvider
-import com.amresalehin.emregallery.data.FlorenceStatus
+import com.amresalehin.emregallery.data.LocalModelStatus
 import com.amresalehin.emregallery.data.MediaItem
 import com.amresalehin.emregallery.data.PreferencesRepository
 import com.amresalehin.emregallery.data.preferences.AiPreferencesManager
@@ -96,7 +96,7 @@ object AiImageTagger {
 
     /**
      * Generates a list of descriptive tags for the specified image item.
-     * Supports configured Cloud Vision providers and Gemma 4 E2B local image inference.
+     * Supports configured Cloud Vision providers, Gemma 4 E2B, and MiniCPM-V 4.6 local image inference.
      * Other local model files remain unavailable until a real inference adapter is implemented.
      */
     suspend fun generateTags(
@@ -143,7 +143,7 @@ object AiImageTagger {
             memoryMessage?.let { return@withContext failure(localSpec.displayName, it) }
 
             val installedState = LocalModelInstaller.checkInstallationStatus(context, localSpec)
-            if (installedState.status != FlorenceStatus.READY || !installedState.runtimeReady) {
+            if (installedState.status != LocalModelStatus.READY || !installedState.runtimeReady) {
                 val message = installedState.errorMessage ?: installedState.statusDetail
                     ?: "${localSpec.displayName} is not installed and runtime-validated. Download it in AI Settings first."
                 return@withContext failure(localSpec.displayName, message)
@@ -246,7 +246,7 @@ object AiImageTagger {
 
         return@withContext failure(
             "AI Vision",
-            "No usable local image model or active Cloud AI provider is configured. Select Gemma 4 or configure a Cloud AI provider in Settings."
+            "No usable local image model or active Cloud AI provider is configured. Select MiniCPM-V 4.6 or Gemma 4, or configure a Cloud AI provider in Settings."
         )
     }
 
