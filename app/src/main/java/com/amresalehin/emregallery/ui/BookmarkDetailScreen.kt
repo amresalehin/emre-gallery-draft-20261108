@@ -313,12 +313,22 @@ fun PocketBookmarkViewerPage(
     val offsetX = remember { Animatable(0f) }
     var isSwiping by remember { mutableStateOf(false) }
 
-    // Inspect the live page on entry
-    LaunchedEffect(stack.id, stack.sourceUrl) {
-        if (stack.sourceUrl.startsWith("http://", ignoreCase = true) ||
-            stack.sourceUrl.startsWith("https://", ignoreCase = true)
-        ) {
-            onFetchSiteMedia?.invoke()
+    val refreshingBookmarkIds by pocketRepo.refreshingBookmarkIds.collectAsState()
+    val isRefreshing = stack.id in refreshingBookmarkIds
+    var pullDownOffset by remember { mutableFloatStateOf(0f) }
+
+    val doRefresh: () -> Unit = {
+        if (stack.sourceUrl.isNotBlank() && !isRefreshing) {
+            Toast.makeText(context, "Updating bookmark media...", Toast.LENGTH_SHORT).show()
+            pocketRepo.refreshBookmarkMedia(stack.id, context) { success ->
+                scope.launch {
+                    if (success) {
+                        Toast.makeText(context, "Bookmark media refreshed and saved", Toast.LENGTH_SHORT).show()
+                    } else {
+                        Toast.makeText(context, "Refresh failed. Kept old saved media.", Toast.LENGTH_SHORT).show()
+                    }
+                }
+            }
         }
     }
 
@@ -421,7 +431,29 @@ fun PocketBookmarkViewerPage(
             Column(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(bottom = if (!isDrawerDismissed) animatedDrawerHeight else 0.dp),
+                    .padding(bottom = if (!isDrawerDismissed) animatedDrawerHeight else 0.dp)
+                    .pointerInput(isRefreshing) {
+                        detectVerticalDragGestures(
+                            onVerticalDrag = { change, dragAmount ->
+                                if (dragAmount > 0f) {
+                                    change.consume()
+                                    pullDownOffset = (pullDownOffset + dragAmount).coerceAtMost(220f)
+                                } else if (dragAmount < 0f && pullDownOffset > 0f) {
+                                    change.consume()
+                                    pullDownOffset = (pullDownOffset + dragAmount).coerceAtLeast(0f)
+                                }
+                            },
+                            onDragEnd = {
+                                if (pullDownOffset >= 110f) {
+                                    doRefresh()
+                                }
+                                pullDownOffset = 0f
+                            },
+                            onDragCancel = {
+                                pullDownOffset = 0f
+                            }
+                        )
+                    },
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 // Top App Bar with Circular Buttons
@@ -509,7 +541,7 @@ fun PocketBookmarkViewerPage(
                             }
                         }
 
-                        // 3. Refresh Link Preview & Metadata
+                        // 3. Refresh Link Preview & Metadata (Only on user tap or pull down)
                         if (stack.sourceUrl.isNotBlank()) {
                             Surface(
                                 shape = CircleShape,
@@ -518,16 +550,24 @@ fun PocketBookmarkViewerPage(
                                 border = BorderStroke(1.dp, if (isDark) dividerCol.copy(alpha = 0.7f) else dividerCol),
                                 modifier = Modifier
                                     .size(44.dp)
-                                    .clickable { onRefreshMetadata?.invoke() }
+                                    .clickable(enabled = !isRefreshing) { doRefresh() }
                                     .testTag("bookmark_viewer_refresh_button")
                             ) {
                                 Box(contentAlignment = Alignment.Center) {
-                                    Icon(
-                                        imageVector = Icons.Default.Refresh,
-                                        contentDescription = "Refresh link preview and details",
-                                        tint = textColor,
-                                        modifier = Modifier.size(19.dp)
-                                    )
+                                    if (isRefreshing) {
+                                        CircularProgressIndicator(
+                                            modifier = Modifier.size(18.dp),
+                                            strokeWidth = 2.dp,
+                                            color = textColor
+                                        )
+                                    } else {
+                                        Icon(
+                                            imageVector = Icons.Default.Refresh,
+                                            contentDescription = "Refresh link preview and details",
+                                            tint = textColor,
+                                            modifier = Modifier.size(19.dp)
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -551,6 +591,34 @@ fun PocketBookmarkViewerPage(
                                     modifier = Modifier.size(20.dp)
                                 )
                             }
+                        }
+                    }
+                }
+
+                // Pull to refresh banner / progress indicator
+                AnimatedVisibility(visible = isRefreshing || pullDownOffset > 40f) {
+                    Surface(
+                        shape = CircleShape,
+                        color = barSurface,
+                        border = BorderStroke(1.dp, dividerCol),
+                        shadowElevation = 4.dp,
+                        modifier = Modifier.padding(vertical = 4.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(14.dp),
+                                strokeWidth = 2.dp,
+                                color = textColor
+                            )
+                            Text(
+                                text = if (isRefreshing) "Updating bookmark media..." else "Pull down to refresh",
+                                style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                                color = textColor
+                            )
                         }
                     }
                 }

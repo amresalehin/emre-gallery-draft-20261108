@@ -20,6 +20,7 @@ import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.tween
 import android.view.MotionEvent
+import android.view.ViewGroup
 import androidx.compose.foundation.background
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.*
@@ -717,6 +718,18 @@ fun DirectBrowserView(
                                     canGoForward = view?.canGoForward() == true
                                 }
 
+                                override fun onRenderProcessGone(view: WebView?, detail: RenderProcessGoneDetail?): Boolean {
+                                    Log.w("DirectBrowserView", "Render process gone in DirectBrowserView (crashed=${detail?.didCrash()})")
+                                    try {
+                                        (view?.parent as? ViewGroup)?.removeView(view)
+                                        view?.destroy()
+                                    } catch (_: Throwable) {}
+                                    if (webViewInstance === view) {
+                                        webViewInstance = null
+                                    }
+                                    return true
+                                }
+
                                 override fun onPageFinished(view: WebView?, url: String?) {
                                     isLoading = false
                                     if (url.isNullOrBlank() || url == "about:blank") {
@@ -755,9 +768,11 @@ fun DirectBrowserView(
                                         request = request,
                                         baseUrl = currentUrl
                                     ) { item ->
-                                        tabSession.registerMedia(item)
-                                        DownloaderSession.addDiscoveredItem(item)
-                                        onMediaExtracted(item)
+                                        view?.post {
+                                            tabSession.registerMedia(item)
+                                            DownloaderSession.addDiscoveredItem(item)
+                                            onMediaExtracted(item)
+                                        }
                                     }
                                 }
                             }
@@ -775,10 +790,15 @@ fun DirectBrowserView(
                         }
                     },
                     onRelease = { wv ->
-                        wv.stopLoading()
-                        wv.webViewClient = WebViewClient()
-                        wv.webChromeClient = WebChromeClient()
-                        wv.destroy()
+                        try {
+                            wv.pauseTimers()
+                            wv.onPause()
+                            wv.stopLoading()
+                            wv.webChromeClient = null
+                            wv.webViewClient = object : WebViewClient() {}
+                            (wv.parent as? ViewGroup)?.removeView(wv)
+                            wv.destroy()
+                        } catch (_: Throwable) {}
                         if (webViewInstance === wv) {
                             webViewInstance = null
                         }

@@ -1149,7 +1149,7 @@ fun BookmarkDeckVideoPlayer(
 
     val player = remember(uri) {
         val loadControl = DefaultLoadControl.Builder()
-            .setBufferDurationsMs(1000, 3000, 100, 250)
+            .setBufferDurationsMs(15000, 50000, 1500, 3000)
             .setPrioritizeTimeOverSizeThresholds(true)
             .build()
         val httpDataSourceFactory = OkHttpDataSource.Factory(OkHttpDownloader.client)

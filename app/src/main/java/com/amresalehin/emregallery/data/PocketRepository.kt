@@ -13,6 +13,9 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.withContext
+import okhttp3.Request
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
@@ -492,8 +495,6 @@ class PocketRepository(
                 )
             }
             _bookmarks.value = list
-            // Automatically fetch missing metadata (titles, descriptions, previews, media) for bookmarks
-            autoFetchMissingMetadata()
         } catch (e: Exception) {
             _bookmarks.value = emptyList()
         }
@@ -529,7 +530,6 @@ class PocketRepository(
                 if (list.isNotEmpty()) {
                     _bookmarks.value = list
                     persist()
-                    autoFetchMissingMetadata()
                 }
             }
         } catch (_: Exception) {}
@@ -673,7 +673,7 @@ class PocketRepository(
                 val newPreview = if (latest.previewImageUrl.isBlank() && meta.previewImageUrl.isNotBlank()) meta.previewImageUrl else latest.previewImageUrl
                 val newDomain = if (latest.sourceDomain.isBlank() && meta.domain.isNotBlank()) meta.domain else latest.sourceDomain
 
-                val newItems = if (latest.items.isEmpty() && meta.mediaItems.isNotEmpty()) {
+                val rawItems = if (latest.items.isEmpty() && meta.mediaItems.isNotEmpty()) {
                     meta.mediaItems
                 } else if (latest.items.isNotEmpty()) {
                     latest.items
@@ -691,14 +691,18 @@ class PocketRepository(
                     emptyList()
                 }
 
-                if (newTitle != latest.title || newDesc != latest.description || newPreview != latest.previewImageUrl ||
-                    newDomain != latest.sourceDomain || newItems.size != latest.items.size) {
+                val savedItems = rawItems.map { saveItemMediaLocally(it, bookmarkId) }
+                val savedPreview = if (newPreview.isNotBlank()) saveBookmarkPreviewLocally(newPreview, bookmarkId) else newPreview
+
+                if (newTitle != latest.title || newDesc != latest.description || savedPreview != latest.previewImageUrl ||
+                    newDomain != latest.sourceDomain || savedItems.size != latest.items.size ||
+                    savedItems.any { it.localUri.isNotBlank() }) {
                     val updated = latest.copy(
                         title = newTitle,
                         description = newDesc,
-                        previewImageUrl = newPreview,
+                        previewImageUrl = savedPreview,
                         sourceDomain = newDomain,
-                        items = newItems
+                        items = savedItems
                     )
                     updateBookmark(updated)
                 }
@@ -708,35 +712,163 @@ class PocketRepository(
         }
     }
 
+    private val pocketMediaDir: File by lazy {
+        File(context.filesDir, "pocket_media").apply { mkdirs() }
+    }
+
+    private val activeRefreshJobs = ConcurrentHashMap<String, Job>()
+    private val _refreshingBookmarkIds = MutableStateFlow<Set<String>>(emptySet())
+    val refreshingBookmarkIds: StateFlow<Set<String>> = _refreshingBookmarkIds.asStateFlow()
+
     /**
-     * Specifically extracts all media of the site for a bookmark.
+     * Downloads and persists a bookmark media item to local device storage, updating its localUri.
+     * Ensures images and media can be viewed anytime without internet access.
      */
-    fun fetchSiteMedia(bookmarkId: String, extractionContext: Context? = null) {
-        coroutineScope.launch {
+    suspend fun saveItemMediaLocally(item: MediaInboxItem, bookmarkId: String): MediaInboxItem = withContext(Dispatchers.IO) {
+        if (item.localUri.isNotBlank()) {
+            val localPath = item.localUri.removePrefix("file://")
+            val f = File(localPath)
+            if (f.exists() && f.length() > 0L) {
+                return@withContext item
+            }
+        }
+        val sourceUrl = item.sourceUrl
+        if (sourceUrl.isBlank() || (!sourceUrl.startsWith("http://", ignoreCase = true) && !sourceUrl.startsWith("https://", ignoreCase = true))) {
+            return@withContext item
+        }
+        try {
+            val cleanExt = when {
+                item.format.isNotBlank() -> item.format.lowercase(Locale.ROOT)
+                sourceUrl.contains(".png", true) -> "png"
+                sourceUrl.contains(".webp", true) -> "webp"
+                sourceUrl.contains(".gif", true) -> "gif"
+                sourceUrl.contains(".svg", true) -> "svg"
+                sourceUrl.contains(".mp4", true) || item.isVideo -> "mp4"
+                else -> "jpg"
+            }
+            val safeBmId = bookmarkId.replace("[^a-zA-Z0-9_]".toRegex(), "_")
+            val safeItemId = item.id.replace("[^a-zA-Z0-9_]".toRegex(), "_")
+            val targetFile = File(pocketMediaDir, "${safeBmId}_${safeItemId}.$cleanExt")
+
+            if (targetFile.exists() && targetFile.length() > 0L) {
+                val fileUri = "file://${targetFile.absolutePath}"
+                return@withContext item.copy(localUri = fileUri, sizeBytes = targetFile.length())
+            }
+
+            val request = Request.Builder()
+                .url(sourceUrl)
+                .header("User-Agent", OkHttpDownloader.DEFAULT_USER_AGENT)
+                .build()
+
+            OkHttpDownloader.client.newCall(request).execute().use { response ->
+                if (response.isSuccessful) {
+                    val body = response.body
+                    if (body != null) {
+                        val tempFile = File(pocketMediaDir, "${safeBmId}_${safeItemId}.tmp")
+                        tempFile.outputStream().use { out ->
+                            body.byteStream().use { input -> input.copyTo(out) }
+                        }
+                        if (tempFile.exists() && tempFile.length() > 0L) {
+                            tempFile.renameTo(targetFile)
+                            val fileUri = "file://${targetFile.absolutePath}"
+                            val actualLen = targetFile.length()
+                            sizeCache[item.id] = actualLen
+                            sizeCache[sourceUrl] = actualLen
+                            return@withContext item.copy(localUri = fileUri, sizeBytes = actualLen)
+                        }
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed downloading local media copy for ${item.sourceUrl}: ${e.message}")
+        }
+        return@withContext item
+    }
+
+    /**
+     * Downloads and persists a preview image to local device storage.
+     */
+    suspend fun saveBookmarkPreviewLocally(previewUrl: String, bookmarkId: String): String = withContext(Dispatchers.IO) {
+        if (previewUrl.isBlank() || (!previewUrl.startsWith("http://", ignoreCase = true) && !previewUrl.startsWith("https://", ignoreCase = true))) {
+            return@withContext previewUrl
+        }
+        try {
+            val safeBmId = bookmarkId.replace("[^a-zA-Z0-9_]".toRegex(), "_")
+            val ext = if (previewUrl.contains(".png", true)) "png" else if (previewUrl.contains(".webp", true)) "webp" else "jpg"
+            val targetFile = File(pocketMediaDir, "preview_${safeBmId}.$ext")
+            if (targetFile.exists() && targetFile.length() > 0L) {
+                return@withContext "file://${targetFile.absolutePath}"
+            }
+
+            val request = Request.Builder()
+                .url(previewUrl)
+                .header("User-Agent", OkHttpDownloader.DEFAULT_USER_AGENT)
+                .build()
+
+            OkHttpDownloader.client.newCall(request).execute().use { response ->
+                if (response.isSuccessful) {
+                    val body = response.body
+                    if (body != null) {
+                        val tempFile = File(pocketMediaDir, "preview_${safeBmId}.tmp")
+                        tempFile.outputStream().use { out ->
+                            body.byteStream().use { input -> input.copyTo(out) }
+                        }
+                        if (tempFile.exists() && tempFile.length() > 0L) {
+                            tempFile.renameTo(targetFile)
+                            return@withContext "file://${targetFile.absolutePath}"
+                        }
+                    }
+                }
+            }
+        } catch (_: Exception) {}
+        return@withContext previewUrl
+    }
+
+    /**
+     * Refreshes bookmark media and metadata on explicit user demand (Refresh button or pull-to-refresh).
+     * - Does not repeatedly scan the same bookmark while in progress.
+     * - Refreshing one bookmark does not interrupt or cancel another.
+     * - If refreshing fails, keeps the existing saved media completely intact.
+     * - Saves all media and previews to local storage so they can be viewed offline anytime.
+     */
+    fun refreshBookmarkMedia(
+        bookmarkId: String,
+        extractionContext: Context? = null,
+        onComplete: ((Boolean) -> Unit)? = null
+    ) {
+        if (activeRefreshJobs.containsKey(bookmarkId) || _refreshingBookmarkIds.value.contains(bookmarkId)) {
+            Log.d(TAG, "Refresh already in progress for bookmark $bookmarkId, ignoring duplicate request")
+            return
+        }
+
+        val job = coroutineScope.launch {
+            _refreshingBookmarkIds.value = _refreshingBookmarkIds.value + bookmarkId
+            var success = false
+            val originalBookmark = _bookmarks.value.find { it.id == bookmarkId }
+            if (originalBookmark == null || originalBookmark.sourceUrl.isBlank()) {
+                _refreshingBookmarkIds.value = _refreshingBookmarkIds.value - bookmarkId
+                activeRefreshJobs.remove(bookmarkId)
+                onComplete?.invoke(false)
+                return@launch
+            }
+
             try {
-                val latest = _bookmarks.value.find { it.id == bookmarkId } ?: return@launch
-                if (latest.sourceUrl.isBlank()) return@launch
-
-                val meta = LinkMetadataFetcher.fetch(latest.sourceUrl)
-                val current = _bookmarks.value.find { it.id == bookmarkId } ?: return@launch
-
-                // Static HTML remains the fast fallback, but cannot see content inserted by JavaScript.
-                // The activity context lets BrowserSession attach a hidden WebView and inspect the hydrated DOM.
+                val meta = LinkMetadataFetcher.fetch(originalBookmark.sourceUrl)
                 val scrapedItems = if (extractionContext != null &&
-                    (latest.sourceUrl.startsWith("http://", ignoreCase = true) ||
-                        latest.sourceUrl.startsWith("https://", ignoreCase = true))
+                    (originalBookmark.sourceUrl.startsWith("http://", ignoreCase = true) ||
+                        originalBookmark.sourceUrl.startsWith("https://", ignoreCase = true))
                 ) {
                     runCatching {
                         BrowserSession.extractHeadless(
                             context = extractionContext,
-                            targetUrl = latest.sourceUrl,
+                            targetUrl = originalBookmark.sourceUrl,
                             onStatusUpdate = { status ->
                                 Log.d(TAG, "Bookmark media scan ($bookmarkId): $status")
                             },
                             publishToDownloader = false
                         ).items
                     }.onFailure { error ->
-                        Log.w(TAG, "JavaScript media scan failed for bookmark $bookmarkId", error)
+                        Log.w(TAG, "Headless scan failed for bookmark $bookmarkId", error)
                     }.getOrDefault(emptyList())
                 } else {
                     emptyList()
@@ -757,111 +889,89 @@ class PocketRepository(
                     )
                 }
 
-                // Prefer page media over OG/site-icon images so the deck opens on actual content.
-                val newPreview = dynamicItems.firstOrNull { !it.isVideo && !it.isAudio }?.sourceUrl
-                    ?.takeIf { it.isNotBlank() }
-                    ?: meta.previewImageUrl.ifBlank { current.previewImageUrl }
-
-                val staticCandidates = (current.items + meta.mediaItems).filterNot { item ->
+                val staticCandidates = meta.mediaItems.filterNot { item ->
                     item.sourceUrl.contains("google.com/s2/favicons", ignoreCase = true)
                 }
+
                 val candidates = if (dynamicItems.isNotEmpty()) {
                     dynamicItems + staticCandidates
                 } else if (meta.mediaItems.isNotEmpty()) {
                     meta.mediaItems
-                } else if (staticCandidates.isNotEmpty()) {
-                    staticCandidates
-                } else if (newPreview.isNotBlank()) {
-                    listOf(
-                        MediaInboxItem(
-                            id = "site_media_${current.id}_preview",
-                            title = meta.title.ifBlank { current.title },
-                            localUri = "",
-                            sourceUrl = newPreview,
-                            isVideo = false,
-                            format = "JPEG",
-                            dateAddedMillis = System.currentTimeMillis()
-                        )
-                    )
                 } else {
-                    current.items
+                    emptyList()
                 }
 
-                val seenKeys = mutableSetOf<String>()
-                val resolvedItems = candidates
-                    .filter { it.sourceUrl.isNotBlank() || it.localUri.isNotBlank() }
-                    .filter { item ->
-                        val keySource = item.sourceUrl.ifBlank { item.localUri }
-                        val key = MediaNormalizer.canonicalKey(keySource).ifBlank { item.id }
-                        seenKeys.add(key)
+                // If refreshing fails or yields no new media, KEEP the old saved media!
+                if (candidates.isEmpty() && meta.title.isBlank() && meta.previewImageUrl.isBlank()) {
+                    Log.w(TAG, "Refresh returned no content for $bookmarkId; retaining existing saved media")
+                    success = false
+                } else {
+                    val seenKeys = mutableSetOf<String>()
+                    val resolvedItems = (candidates.ifEmpty { originalBookmark.items })
+                        .filter { it.sourceUrl.isNotBlank() || it.localUri.isNotBlank() }
+                        .filter { item ->
+                            val keySource = item.sourceUrl.ifBlank { item.localUri }
+                            val key = MediaNormalizer.canonicalKey(keySource).ifBlank { item.id }
+                            seenKeys.add(key)
+                        }
+                        .take(60)
+
+                    // Download and save all media locally on device
+                    val locallySavedItems = resolvedItems.map { itm ->
+                        saveItemMediaLocally(itm, bookmarkId)
                     }
-                    .take(60)
 
-                val cleanDomain = current.sourceDomain.ifBlank { meta.domain }
-                val isTitleDefault = current.title.isBlank() ||
-                    current.title.equals(cleanDomain, ignoreCase = true) ||
-                    current.title.equals(current.sourceUrl, ignoreCase = true) ||
-                    current.title == "Untitled Bookmark"
+                    val previewCandidate = locallySavedItems.firstOrNull { !it.isVideo && !it.isAudio }?.localUri
+                        ?.ifBlank { locallySavedItems.firstOrNull { !it.isVideo && !it.isAudio }?.sourceUrl }
+                        ?: meta.previewImageUrl.ifBlank { originalBookmark.previewImageUrl }
 
-                val updated = current.copy(
-                    title = if (isTitleDefault && meta.title.isNotBlank()) meta.title else current.title,
-                    description = current.description.ifBlank { meta.description },
-                    previewImageUrl = newPreview,
-                    sourceDomain = cleanDomain,
-                    items = resolvedItems
-                )
-                updateBookmark(updated)
-                Log.d(TAG, "Bookmark media scan completed: ${resolvedItems.size} items for $bookmarkId")
+                    val locallySavedPreview = saveBookmarkPreviewLocally(previewCandidate, bookmarkId)
+                    val cleanDomain = originalBookmark.sourceDomain.ifBlank { meta.domain }
+
+                    val finalItems = if (locallySavedItems.isNotEmpty()) locallySavedItems else originalBookmark.items
+
+                    val updated = originalBookmark.copy(
+                        title = if (meta.title.isNotBlank()) meta.title else originalBookmark.title,
+                        description = if (meta.description.isNotBlank()) meta.description else originalBookmark.description,
+                        previewImageUrl = locallySavedPreview.ifBlank { originalBookmark.previewImageUrl },
+                        sourceDomain = cleanDomain,
+                        items = finalItems
+                    )
+                    updateBookmark(updated)
+                    success = true
+                    Log.d(TAG, "Bookmark media refreshed and saved locally: ${finalItems.size} items for $bookmarkId")
+                }
             } catch (e: Exception) {
-                Log.e(TAG, "Error fetching site media for bookmark $bookmarkId", e)
+                Log.e(TAG, "Error refreshing bookmark $bookmarkId; retaining old saved media", e)
+                success = false
+            } finally {
+                activeRefreshJobs.remove(bookmarkId)
+                _refreshingBookmarkIds.value = _refreshingBookmarkIds.value - bookmarkId
+                onComplete?.invoke(success)
             }
         }
+        activeRefreshJobs[bookmarkId] = job
+    }
+
+    /**
+     * Specifically extracts all media of the site for a bookmark.
+     */
+    fun fetchSiteMedia(bookmarkId: String, extractionContext: Context? = null) {
+        refreshBookmarkMedia(bookmarkId, extractionContext)
     }
 
     /**
      * Refreshes both static metadata and JavaScript-rendered site media.
      */
     fun refreshMetadata(bookmarkId: String, extractionContext: Context? = null) {
-        fetchSiteMedia(bookmarkId, extractionContext)
+        refreshBookmarkMedia(bookmarkId, extractionContext)
     }
 
     /**
-     * Checks all stored bookmarks and automatically fetches any missing previews or descriptions.
+     * Background utility to fetch metadata for a new bookmark if requested.
      */
     fun autoFetchMissingMetadata() {
-        coroutineScope.launch {
-            val missing = _bookmarks.value.filter {
-                it.sourceUrl.isNotBlank() && (it.previewImageUrl.isBlank() || it.description.isBlank() || it.items.isEmpty())
-            }
-            for (bm in missing) {
-                try {
-                    val meta = LinkMetadataFetcher.fetch(bm.sourceUrl)
-                    val current = _bookmarks.value.find { it.id == bm.id } ?: continue
-
-                    val cleanDomain = current.sourceDomain.ifBlank { MediaClassifier.cleanDomainFromUrl(bm.sourceUrl) }
-                    val isTitleDefault = current.title.isBlank() ||
-                            current.title.equals(cleanDomain, ignoreCase = true) ||
-                            current.title.equals(bm.sourceUrl, ignoreCase = true) ||
-                            current.title == "Untitled Bookmark"
-
-                    val newTitle = if (isTitleDefault && meta.title.isNotBlank()) meta.title else current.title
-                    val newDesc = if (current.description.isBlank() && meta.description.isNotBlank()) meta.description else current.description
-                    val newPreview = if (current.previewImageUrl.isBlank() && meta.previewImageUrl.isNotBlank()) meta.previewImageUrl else current.previewImageUrl
-                    val newItems = if (current.items.isEmpty() && meta.mediaItems.isNotEmpty()) meta.mediaItems else current.items
-
-                    if (newTitle != current.title || newDesc != current.description || newPreview != current.previewImageUrl || newItems.size != current.items.size) {
-                        updateBookmark(
-                            current.copy(
-                                title = newTitle,
-                                description = newDesc,
-                                previewImageUrl = newPreview,
-                                items = newItems
-                            )
-                        )
-                    }
-                } catch (_: Exception) {}
-            }
-        }
+        // Kept for backward compatibility, does not automatically run on bookmark opens.
     }
 
     fun updateBookmark(updated: MediaInboxStack) {

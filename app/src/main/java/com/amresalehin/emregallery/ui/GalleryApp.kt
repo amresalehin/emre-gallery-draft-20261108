@@ -1171,14 +1171,12 @@ fun GalleryApp() {
                                     }
                                 },
                                 onRefreshMetadata = {
-                                    pocketRepo.refreshMetadata(activeStack.id, context)
+                                    pocketRepo.refreshBookmarkMedia(activeStack.id, context)
                                     scope.launch {
-                                        snackbarHostState.showSnackbar("Refreshing link info & preview...")
+                                        snackbarHostState.showSnackbar("Refreshing link info & media...")
                                     }
                                 },
-                                onFetchSiteMedia = {
-                                    pocketRepo.fetchSiteMedia(activeStack.id, context)
-                                },
+                                onFetchSiteMedia = null,
                                 isDark = MaterialTheme.colorScheme.surface.luminance() < 0.5f,
                                 modifier = Modifier.fillMaxSize()
                             )

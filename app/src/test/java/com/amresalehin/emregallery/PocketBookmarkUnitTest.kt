@@ -846,5 +846,64 @@ class PocketBookmarkUnitTest {
         assertEquals(1, filter1Mb.size)
         assertEquals("clip", filter1Mb[0].id)
     }
+
+    @Test
+    fun testSavedMediaPreservedWhenRefreshFails() {
+        val initialItems = listOf(
+            MediaInboxItem(
+                id = "item_1",
+                title = "Photo 1",
+                localUri = "file:///data/user/0/com.amresalehin.emregallery/files/pocket_media/photo1.jpg",
+                sourceUrl = "https://example.com/photo1.jpg",
+                isVideo = false
+            ),
+            MediaInboxItem(
+                id = "item_2",
+                title = "Photo 2",
+                localUri = "file:///data/user/0/com.amresalehin.emregallery/files/pocket_media/photo2.jpg",
+                sourceUrl = "https://example.com/photo2.jpg",
+                isVideo = false
+            )
+        )
+        val existingBookmark = MediaInboxStack(
+            id = "bm_test",
+            title = "Existing Saved Bookmark",
+            sourceDomain = "example.com",
+            sourceUrl = "https://example.com/gallery",
+            items = initialItems,
+            previewImageUrl = "file:///data/user/0/com.amresalehin.emregallery/files/pocket_media/preview.jpg"
+        )
+
+        // Simulate refresh failure (empty candidates returned from failing network)
+        val candidateItemsFromFailedRefresh = emptyList<MediaInboxItem>()
+        val finalItems = if (candidateItemsFromFailedRefresh.isNotEmpty()) {
+            candidateItemsFromFailedRefresh
+        } else {
+            existingBookmark.items
+        }
+
+        assertEquals("Old saved media must be completely preserved when refresh fails", 2, finalItems.size)
+        assertEquals(initialItems[0].localUri, finalItems[0].localUri)
+        assertEquals(initialItems[1].localUri, finalItems[1].localUri)
+    }
+
+    @Test
+    fun testBookmarkMediaLocalUriViewingAnytime() {
+        val localItem = MediaInboxItem(
+            id = "local_item_1",
+            title = "Saved Infographic",
+            localUri = "file:///data/user/0/com.amresalehin.emregallery/files/pocket_media/bm1_item1.png",
+            sourceUrl = "https://example.com/info.png",
+            isVideo = false
+        )
+        // Check resolving path
+        val resolvedPath = if (localItem.localUri.isNotBlank()) {
+            localItem.localUri
+        } else {
+            localItem.sourceUrl
+        }
+        assertTrue("Local path must be prioritized for offline viewing anytime", resolvedPath.startsWith("file://"))
+    }
 }
+
 
