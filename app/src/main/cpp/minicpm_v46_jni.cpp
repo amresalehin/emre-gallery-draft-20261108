@@ -13,7 +13,7 @@
 
 namespace {
 constexpr const char * kTag = "EmreMiniCPM";
-constexpr int32_t kContextSize = 8192;
+constexpr int32_t kContextSize = 4096;
 constexpr int32_t kBatchSize = 1024;
 constexpr int32_t kThreads = 4;
 
@@ -175,6 +175,9 @@ Java_com_amresalehin_emregallery_ai_local_MiniCpmV46Native_generateImage(
     }
 
     llama_memory_clear(llama_get_memory(g_context), true);
+
+    // Follow OpenBMB's official Android flow: prefill the image marker and
+    // vision tokens first, then evaluate the user text and assistant prefix.
     mtmd_bitmap * bitmap = mtmd_helper_bitmap_init_from_buf(
         g_vision,
         reinterpret_cast<const unsigned char *>(image_data),
@@ -186,31 +189,51 @@ Java_com_amresalehin_emregallery_ai_local_MiniCpmV46Native_generateImage(
         return nullptr;
     }
 
-    std::string prompt = "<|im_start|>user\n";
-    prompt += mtmd_default_marker();
-    prompt += "\n" + instruction + "<|im_end|>\n";
-    prompt += "<|im_start|>assistant\n<think>\n\n</think>\n\n";
-
-    mtmd_input_text input_text = { prompt.c_str(), true, true };
-    mtmd_input_chunks * chunks = mtmd_input_chunks_init();
+    const char * marker = mtmd_default_marker();
+    mtmd_input_text image_text = { marker, true, true };
+    mtmd_input_chunks * image_chunks = mtmd_input_chunks_init();
     const mtmd_bitmap * bitmaps[] = { bitmap };
-    const int32_t tokenize_result = mtmd_tokenize(g_vision, chunks, &input_text, bitmaps, 1);
+    const int32_t image_tokenize_result =
+        mtmd_tokenize(g_vision, image_chunks, &image_text, bitmaps, 1);
     mtmd_bitmap_free(bitmap);
-    if (tokenize_result != 0) {
-        mtmd_input_chunks_free(chunks);
-        set_error("libmtmd could not tokenize the MiniCPM-V image prompt (code " +
-                  std::to_string(tokenize_result) + ").");
+    if (image_tokenize_result != 0) {
+        mtmd_input_chunks_free(image_chunks);
+        set_error("libmtmd could not tokenize the MiniCPM-V image (code " +
+                  std::to_string(image_tokenize_result) + ").");
         return nullptr;
     }
 
     llama_pos next_position = 0;
-    const int32_t eval_result = mtmd_helper_eval_chunks(
-        g_vision, g_context, chunks, 0, 0, kBatchSize, true, &next_position
+    const int32_t image_eval_result = mtmd_helper_eval_chunks(
+        g_vision, g_context, image_chunks, 0, 0, kBatchSize, false, &next_position
     );
-    mtmd_input_chunks_free(chunks);
-    if (eval_result != 0) {
-        set_error("libmtmd image encoding or prompt evaluation failed (code " +
-                  std::to_string(eval_result) + ").");
+    mtmd_input_chunks_free(image_chunks);
+    if (image_eval_result != 0) {
+        set_error("libmtmd vision encoding failed (code " +
+                  std::to_string(image_eval_result) + ").");
+        return nullptr;
+    }
+
+    std::string prompt = "<|im_start|>user\\n" + instruction + "<|im_end|>\\n";
+    prompt += "<|im_start|>assistant\\n<think>\\n\\n</think>\\n\\n";
+    mtmd_input_text text_input = { prompt.c_str(), false, true };
+    mtmd_input_chunks * text_chunks = mtmd_input_chunks_init();
+    const int32_t text_tokenize_result =
+        mtmd_tokenize(g_vision, text_chunks, &text_input, nullptr, 0);
+    if (text_tokenize_result != 0) {
+        mtmd_input_chunks_free(text_chunks);
+        set_error("libmtmd could not tokenize the MiniCPM-V tagging prompt (code " +
+                  std::to_string(text_tokenize_result) + ").");
+        return nullptr;
+    }
+
+    const int32_t text_eval_result = mtmd_helper_eval_chunks(
+        g_vision, g_context, text_chunks, next_position, 0, kBatchSize, true, &next_position
+    );
+    mtmd_input_chunks_free(text_chunks);
+    if (text_eval_result != 0) {
+        set_error("libmtmd prompt evaluation failed (code " +
+                  std::to_string(text_eval_result) + ").");
         return nullptr;
     }
 
