@@ -5,6 +5,7 @@ import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import com.amresalehin.emregallery.data.CloudAiConnectionTester
 import com.amresalehin.emregallery.data.CloudAiProvider
+import com.amresalehin.emregallery.data.CloudApiKeyVault
 import com.amresalehin.emregallery.data.CloudProviderStatus
 import com.amresalehin.emregallery.data.LocalModelManager
 import com.amresalehin.emregallery.data.LocalModelState
@@ -37,6 +38,29 @@ class AiPreferencesManager(private val context: Context) {
     }.distinctUntilChanged()
 
     val localModelState: Flow<LocalModelState> = LocalModelManager.modelState
+
+    /**
+     * Rewrites legacy plaintext API keys once. This is deliberately not attached to the
+     * cloudProviders flow: writing DataStore from a collector of that same flow can create
+     * a self-triggering emission/write loop.
+     */
+    suspend fun migrateLegacyApiKeys() {
+        context.galleryDataStore.edit { prefs ->
+            val raw = prefs[cloudProvidersKey] ?: return@edit
+            val legacyProviders = parseProvidersJson(raw)
+            val hasLegacyKeys = runCatching {
+                val array = JSONArray(raw)
+                (0 until array.length()).any { index ->
+                    val key = array.optJSONObject(index)?.optString("apiKey").orEmpty()
+                    key.isNotBlank() && !CloudApiKeyVault.isEncrypted(key)
+                }
+            }.getOrDefault(false)
+
+            if (hasLegacyKeys) {
+                prefs[cloudProvidersKey] = serializeProvidersJson(legacyProviders)
+            }
+        }
+    }
 
     suspend fun saveProvider(provider: CloudAiProvider) {
         context.galleryDataStore.edit { prefs ->
@@ -151,7 +175,7 @@ class AiPreferencesManager(private val context: Context) {
                         id = obj.getString("id"),
                         name = obj.getString("name"),
                         baseUrl = obj.getString("baseUrl"),
-                        apiKey = obj.optString("apiKey", ""),
+                        apiKey = CloudApiKeyVault.decryptIfNeeded(obj.optString("apiKey", "")),
                         modelId = obj.getString("modelId"),
                         isActive = obj.optBoolean("isActive", false),
                         status = status,
@@ -173,7 +197,7 @@ class AiPreferencesManager(private val context: Context) {
                 put("id", p.id)
                 put("name", p.name)
                 put("baseUrl", p.baseUrl)
-                put("apiKey", p.apiKey)
+                put("apiKey", CloudApiKeyVault.encryptForStorage(p.apiKey))
                 put("modelId", p.modelId)
                 put("isActive", p.isActive)
                 put("status", p.status.name)
