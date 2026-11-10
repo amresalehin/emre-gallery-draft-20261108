@@ -96,6 +96,7 @@ find_library(android-lib android)
 add_library(emre_minicpm SHARED
     minicpm_v46_jni.cpp
     lfm2_5_vl_jni.cpp
+    qwen3_5_jni.cpp
 )
 target_include_directories(emre_minicpm PRIVATE
     "${llama_cpp_SOURCE_DIR}/include"
