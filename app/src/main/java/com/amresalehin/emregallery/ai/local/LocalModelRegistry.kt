@@ -194,6 +194,7 @@ object LocalModelRegistry {
     }
 
     private val retiredLocalModelIds = setOf(
+        "florence2", "florence-2", "florence-2-base", "florence2_base",
         "gemma_3_1b_it", "gemma3_1b",
         "lfm2_350m", "lfm2_350m_extract",
         "qwen2_5_0_5b", "qwen2_5_05b"
