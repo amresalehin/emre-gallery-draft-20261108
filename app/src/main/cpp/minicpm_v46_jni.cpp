@@ -115,6 +115,20 @@ Java_com_amresalehin_emregallery_ai_local_MiniCpmV46Native_loadModel(
         return JNI_FALSE;
     }
 
+    mtmd_context_params vision_params = mtmd_context_params_default();
+    vision_params.use_gpu = false;
+    vision_params.print_timings = false;
+    vision_params.n_threads = kThreads;
+    vision_params.warmup = false;
+    g_vision = mtmd_init_from_file(projector_path, g_model, vision_params);
+    env->ReleaseStringUTFChars(j_projector_path, projector_path);
+
+    if (!g_vision || !mtmd_support_vision(g_vision)) {
+        release_model_locked();
+        set_error("The MiniCPM-V 4.6 vision projector could not be initialized or does not expose vision input.");
+        return JNI_FALSE;
+    }
+
     llama_context_params context_params = llama_context_default_params();
     context_params.n_ctx = kContextSize;
     context_params.n_batch = kBatchSize;
@@ -127,20 +141,6 @@ Java_com_amresalehin_emregallery_ai_local_MiniCpmV46Native_loadModel(
         env->ReleaseStringUTFChars(j_projector_path, projector_path);
         release_model_locked();
         set_error("llama.cpp could not create the MiniCPM-V 4.6 inference context.");
-        return JNI_FALSE;
-    }
-
-    mtmd_context_params vision_params = mtmd_context_params_default();
-    vision_params.use_gpu = false;
-    vision_params.print_timings = false;
-    vision_params.n_threads = kThreads;
-    vision_params.warmup = false;
-    g_vision = mtmd_init_from_file(projector_path, g_model, vision_params);
-    env->ReleaseStringUTFChars(j_projector_path, projector_path);
-
-    if (!g_vision || !mtmd_support_vision(g_vision)) {
-        release_model_locked();
-        set_error("The MiniCPM-V 4.6 vision projector could not be initialized or does not expose vision input.");
         return JNI_FALSE;
     }
 
