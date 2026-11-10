@@ -152,10 +152,10 @@ class AiImageTaggerTest {
     }
 
     @Test
-    fun testMiniCpmAndGemmaHaveLocalImageTaggingCapability() {
+    fun testLocalImageTaggingRuntimeAvailability() {
         assertTrue(LocalModelRegistry.MINI_CPM_V46_SPEC.hasRuntimeAdapter)
         assertTrue(LocalModelRegistry.GEMMA_4_SPEC.hasRuntimeAdapter)
-        assertFalse(LocalModelRegistry.LFM2_5_SPEC.hasRuntimeAdapter)
+        assertTrue(LocalModelRegistry.LFM2_5_SPEC.hasRuntimeAdapter)
         assertFalse(LocalModelRegistry.QWEN3_5_SPEC.hasRuntimeAdapter)
     }
 
