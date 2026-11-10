@@ -239,12 +239,14 @@ class AiConfigurationTest {
         assertEquals("litert-community/gemma-4-E2B-it-litert-lm", gemma.upstreamRepo)
         assertEquals(ModelTaskType.VISION_LANGUAGE, gemma.taskType)
         assertEquals(ModelArchitecture.GEMMA4, gemma.architecture)
-        assertFalse("Gemma 4 runtime adapter not active yet", gemma.hasRuntimeAdapter)
+        assertTrue("Gemma 4 has a real LiteRT-LM image-inference adapter", gemma.hasRuntimeAdapter)
+        assertEquals("Apache-2.0", gemma.license)
+        assertEquals("6e5c4f1e395deb959c494953478fa5cec4b8008f", gemma.upstreamRevision)
 
         val artifact = gemma.artifacts.firstOrNull { it.role == ArtifactRole.LITERT_MODEL }
         assertNotNull("Gemma 4 must declare generic litertlm artifact", artifact)
         assertEquals("gemma-4-E2B-it.litertlm", artifact?.relativePath)
-        assertEquals(2_781_778_740L, artifact?.exactBytes)
+        assertEquals(2_588_147_712L, artifact?.exactBytes)
     }
 
     @Test
@@ -292,11 +294,12 @@ class AiConfigurationTest {
     fun testLegacyAliasResolution() {
         assertEquals("florence2", FlorenceModelManager.getSpec("florence2").id)
         assertEquals("gemma_4_e2b", FlorenceModelManager.getSpec("gemma_4_e2b").id)
-        assertEquals("gemma_4_e2b", FlorenceModelManager.getSpec("gemma_3_1b_it").id)
+        assertEquals("gemma_4_e2b", FlorenceModelManager.getSpec("gemma4").id)
         assertEquals("lfm2_5_vl_450m_extract", FlorenceModelManager.getSpec("lfm2_5_vl_450m_extract").id)
-        assertEquals("lfm2_5_vl_450m_extract", FlorenceModelManager.getSpec("lfm2_350m").id)
         assertEquals("qwen3_5_0_8b", FlorenceModelManager.getSpec("qwen3_5_0_8b").id)
-        assertEquals("qwen3_5_0_8b", FlorenceModelManager.getSpec("qwen2_5_0_5b").id)
+        assertNull(LocalModelRegistry.findSpec("gemma_3_1b_it"))
+        assertNull(LocalModelRegistry.findSpec("lfm2_350m"))
+        assertNull(LocalModelRegistry.findSpec("qwen2_5_0_5b"))
     }
 
     // -------------------------------------------------------------------------
@@ -521,7 +524,7 @@ class AiConfigurationTest {
     }
 
     @Test
-    fun testModelWithoutRuntimeMarkedAssetsOnly() {
+    fun testAssetsOnlyManifestDoesNotBecomeRuntimeReady() {
         val gemma = LocalModelRegistry.GEMMA_4_SPEC
         val modelDir = File(testFilesDir, gemma.subdir)
         modelDir.deleteRecursively()
@@ -546,6 +549,30 @@ class AiConfigurationTest {
         assertEquals(FlorenceStatus.ASSETS_DOWNLOADED_RUNTIME_UNAVAILABLE, state.status)
         assertFalse("Gemma must not be ready as it has no runtime adapter", state.runtimeReady)
 
+        modelDir.deleteRecursively()
+    }
+
+    @Test
+    fun testGemmaReadyManifestIsReportedRuntimeReady() {
+        val spec = LocalModelRegistry.GEMMA_4_SPEC
+        val modelDir = File(testFilesDir, spec.subdir)
+        modelDir.deleteRecursively()
+        modelDir.mkdirs()
+        for (artifact in spec.artifacts) {
+            createDummyFileOfSize(File(modelDir, artifact.relativePath), artifact.exactBytes ?: artifact.expectedMinBytes)
+        }
+        val manifest = JSONObject().apply {
+            put("id", spec.id)
+            put("upstreamRepo", spec.upstreamRepo)
+            put("upstreamRevision", spec.upstreamRevision)
+            put("status", "READY")
+            put("hasRuntimeAdapter", true)
+        }
+        File(modelDir, spec.manifestFileName).writeText(manifest.toString())
+
+        val state = LocalModelInstaller.checkInstallationStatus(testFilesDir, spec)
+        assertEquals(FlorenceStatus.READY, state.status)
+        assertTrue(state.runtimeReady)
         modelDir.deleteRecursively()
     }
 
