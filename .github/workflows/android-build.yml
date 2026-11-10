@@ -50,8 +50,11 @@ jobs:
 
       - name: Install Android NDK and CMake
         run: |
-          echo "Android SDK: ${ANDROID_HOME:-$ANDROID_SDK_ROOT}"
-          sdkmanager --install "ndk;27.0.12077973" "cmake;3.22.1"
+          SDK_ROOT="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          echo "Android SDK: $SDK_ROOT"
+          echo "ANDROID_HOME=$SDK_ROOT" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=$SDK_ROOT" >> "$GITHUB_ENV"
+          "$SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" --install "ndk;27.0.12077973" "cmake;3.22.1"
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v6
