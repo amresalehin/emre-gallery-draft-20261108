@@ -1,9 +1,9 @@
 package com.amresalehin.emregallery
 
+import com.amresalehin.emregallery.ai.local.LocalModelRegistry
 import com.amresalehin.emregallery.ai.tagging.AiImageTagger
 import com.amresalehin.emregallery.data.CloudAiProvider
 import com.amresalehin.emregallery.data.CloudProviderStatus
-import com.amresalehin.emregallery.data.MediaItem
 import kotlinx.coroutines.runBlocking
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
@@ -152,36 +152,11 @@ class AiImageTaggerTest {
     }
 
     @Test
-    fun testFlorenceAndQwenLocalModelTaxonomy() {
-        val item = MediaItem(
-            id = 101L,
-            uri = "content://media/external/images/media/101",
-            name = "Landscape_Photo.jpg",
-            mimeType = "image/jpeg",
-            dateAddedSeconds = 1700000000L,
-            dateTakenMillis = 1700000000000L,
-            sizeBytes = 2048000L,
-            width = 1920,
-            height = 1080,
-            relativePath = "DCIM/Camera/",
-            isVideo = false
-        )
-
-        val florenceTags = AiImageTagger.tagWithLocalModelSpec(
-            null,
-            item,
-            com.amresalehin.emregallery.ai.local.LocalModelRegistry.FLORENCE_2_SPEC
-        )
-        assertTrue("Florence tags should contain florence2", florenceTags.contains("florence2"))
-        assertTrue("Florence tags should contain vision-language", florenceTags.contains("vision-language"))
-
-        val qwenTags = AiImageTagger.tagWithLocalModelSpec(
-            null,
-            item,
-            com.amresalehin.emregallery.ai.local.LocalModelRegistry.QWEN3_5_SPEC
-        )
-        assertTrue("Qwen tags should contain vision-qa", qwenTags.contains("vision-qa"))
-        assertTrue("Qwen tags should contain multimodal", qwenTags.contains("multimodal"))
+    fun testOnlyGemmaHasLocalImageTaggingCapability() {
+        assertTrue(LocalModelRegistry.GEMMA_4_SPEC.hasRuntimeAdapter)
+        assertFalse(LocalModelRegistry.FLORENCE_2_SPEC.hasRuntimeAdapter)
+        assertFalse(LocalModelRegistry.LFM2_5_SPEC.hasRuntimeAdapter)
+        assertFalse(LocalModelRegistry.QWEN3_5_SPEC.hasRuntimeAdapter)
     }
 
     @Test
@@ -269,33 +244,12 @@ class AiImageTaggerTest {
     }
 
     @Test
-    fun testLocalModelTaxonomyGeneration() {
-        val item = MediaItem(
-            id = 201L,
-            uri = "content://media/external/images/media/201",
-            name = "Nature_Photo.jpg",
-            mimeType = "image/jpeg",
-            dateAddedSeconds = 1700000000L,
-            dateTakenMillis = 1700000000000L,
-            sizeBytes = 1000000L,
-            width = 1920,
-            height = 1080,
-            relativePath = "DCIM/Camera/",
-            isVideo = false
-        )
-
-        val gemmaTags = AiImageTagger.tagWithLocalModelSpec(
-            null,
-            item,
-            com.amresalehin.emregallery.ai.local.LocalModelRegistry.GEMMA_4_SPEC
-        )
-        assertTrue("Gemma tags should contain multimodal taxonomy", gemmaTags.contains("multimodal"))
-
-        val lfmTags = AiImageTagger.tagWithLocalModelSpec(
-            null,
-            item,
-            com.amresalehin.emregallery.ai.local.LocalModelRegistry.LFM2_5_SPEC
-        )
-        assertTrue("LFM tags should contain extract taxonomy", lfmTags.contains("extract"))
+    fun testOlderGenerationsAreNotAliasesForNewerModels() {
+        assertNull(LocalModelRegistry.findSpec("gemma_3_1b_it"))
+        assertNull(LocalModelRegistry.findSpec("gemma3_1b"))
+        assertNull(LocalModelRegistry.findSpec("lfm2_350m"))
+        assertNull(LocalModelRegistry.findSpec("qwen2_5_0_5b"))
+        assertEquals("gemma_4_e2b", LocalModelRegistry.findSpec("gemma4")?.id)
     }
+
 }
