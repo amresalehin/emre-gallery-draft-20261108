@@ -159,7 +159,7 @@ object LocalModelRegistry {
         subdir = "models/qwen3_5_0_8b",
         manifestFileName = "qwen3_5_manifest.json",
         testTagPrefix = "qwen",
-        hasRuntimeAdapter = false, // Assets downloaded — runtime unavailable (llama.cpp runtime adapter not active)
+        hasRuntimeAdapter = true, // Qwen35RuntimeAdapter uses llama.cpp Qwen35 + Qwen3VL MTMD inference.
         artifacts = listOf(
             LocalModelArtifact(
                 relativePath = "Qwen3.5-0.8B-UD-Q4_K_XL.gguf",
