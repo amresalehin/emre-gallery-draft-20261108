@@ -12,6 +12,7 @@ import com.amresalehin.emregallery.ai.local.Gemma4RuntimeAdapter
 import com.amresalehin.emregallery.ai.local.LocalImageTaggingRuntime
 import com.amresalehin.emregallery.ai.local.MiniCpmV46RuntimeAdapter
 import com.amresalehin.emregallery.ai.local.Lfm25VlRuntimeAdapter
+import com.amresalehin.emregallery.ai.local.Qwen35RuntimeAdapter
 import com.amresalehin.emregallery.ai.local.LocalModelInstaller
 import com.amresalehin.emregallery.ai.local.LocalModelRegistry
 import com.amresalehin.emregallery.ai.local.LocalModelRuntimeRegistry
@@ -97,8 +98,8 @@ object AiImageTagger {
 
     /**
      * Generates a list of descriptive tags for the specified image item.
-     * Supports configured Cloud Vision providers, Gemma 4 E2B, MiniCPM-V 4.6, and LFM2.5-VL-450M-Extract local inference.
-     * Qwen3.5 remains unavailable until its compatible vision runtime is implemented.
+     * Supports configured Cloud Vision providers, Gemma 4 E2B, MiniCPM-V 4.6, LFM2.5-VL-450M-Extract, and Qwen3.5-0.8B local inference.
+     * All four configured local model runtimes are available when their model artifacts are installed and validated.
      */
     suspend fun generateTags(
         context: Context,
@@ -140,6 +141,7 @@ object AiImageTagger {
                 ModelArchitecture.GEMMA4 -> Gemma4RuntimeAdapter.deviceClassRequirementMessage(context)
                 ModelArchitecture.MINICPM_V46 -> MiniCpmV46RuntimeAdapter.deviceClassRequirementMessage(context)
                 ModelArchitecture.LFM2_5 -> Lfm25VlRuntimeAdapter.memoryRequirementMessage(context)
+                ModelArchitecture.QWEN3_5 -> Qwen35RuntimeAdapter.memoryRequirementMessage(context)
                 else -> null
             }
             memoryMessage?.let { return@withContext failure(localSpec.displayName, it) }
@@ -159,6 +161,7 @@ object AiImageTagger {
                     is Gemma4RuntimeAdapter -> runtime.lastErrorMessage
                     is MiniCpmV46RuntimeAdapter -> runtime.lastErrorMessage
                     is Lfm25VlRuntimeAdapter -> runtime.lastErrorMessage
+                    is Qwen35RuntimeAdapter -> runtime.lastErrorMessage
                     else -> null
                 } ?: "The selected local model could not initialize on this device."
                 LocalModelRuntimeRegistry.closeRuntime(localSpec.id)
@@ -166,7 +169,7 @@ object AiImageTagger {
             }
             val imageRuntime = runtime as? LocalImageTaggingRuntime
                 ?: return@withContext failure(localSpec.displayName, "The selected runtime does not expose image-to-text inference.")
-            val maxDimension = if (localSpec.architecture == ModelArchitecture.MINICPM_V46) 768 else 448
+            val maxDimension = if (localSpec.architecture == ModelArchitecture.MINICPM_V46 || localSpec.architecture == ModelArchitecture.QWEN3_5) 768 else 448
             val bitmap = loadSampledBitmap(context, Uri.parse(item.uri), maxDimension)
                 ?: return@withContext failure(localSpec.displayName, "The image could not be decoded from the media URI.")
             try {
