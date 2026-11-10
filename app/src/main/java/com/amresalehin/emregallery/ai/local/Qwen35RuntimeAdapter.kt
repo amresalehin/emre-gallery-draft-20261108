@@ -47,24 +47,22 @@ class Qwen35RuntimeAdapter(
         }
 
         /**
-         * Qwen3.5 Small is non-thinking by default. Ask explicitly for a compact
-         * JSON response so its reasoning tokens do not inflate gallery metadata.
+         * Qwen3.5 Small is non-thinking by default. Ask explicitly for compact
+         * JSON tags because the gallery's current local inference contract stores tags.
          */
         private val SYSTEM_PROMPT = """
-You are an accurate image captioning and tagging engine for a personal photo gallery.
+You are an accurate image tagging engine for a personal photo gallery.
 Inspect the supplied image itself. Identify only people, animals, objects, places, activities, and visual details that are clearly visible.
 
-Create:
-- caption: one short, objective sentence describing the main visible content.
-- tags: 6 to 12 concise, useful search tags. Prefer specific nouns and short phrases. Include the main subjects, setting, activity, and distinctive visible attributes when relevant.
+Create 6 to 12 concise, useful search tags. Prefer specific nouns and short phrases. Include the main subjects, setting, activity, and distinctive visible attributes when relevant.
 
 Return exactly one valid JSON object with this shape:
-{"caption":"short factual caption","tags":["tag one","tag two"]}
+{"tags":["tag one","tag two"]}
 
 Do not guess identities, locations, dates, relationships, intentions, or details that cannot be seen. Avoid generic tags such as image, photo, picture, or AI. Use lowercase tags. Do not include markdown, code fences, analysis, or any text outside the JSON object.
 """.trimIndent()
 
-        /** Extracts only the model's tags array; the caption is not stored as a search tag. */
+        /** Extracts the model's JSON tags array for the gallery's search index. */
         internal fun parseStructuredResponse(raw: String): String {
             val start = raw.indexOf('{')
             val end = raw.lastIndexOf('}')
