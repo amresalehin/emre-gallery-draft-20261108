@@ -120,7 +120,7 @@ object LocalModelRegistry {
     const val GEMMA_4_E2B_ID = "gemma_4_e2b"
     const val GEMMA_4_CANONICAL_ID = "gemma-4-e2b-it-litert-lm"
     const val GEMMA_4_REPO = "litert-community/gemma-4-E2B-it-litert-lm"
-    const val GEMMA_4_REVISION = "3d48132a00cf76de57d926de30f5c5c5ed9b8c0d"
+    const val GEMMA_4_REVISION = "6e5c4f1e395deb959c494953478fa5cec4b8008f"
 
     private fun gemma4Url(fileName: String): String =
         "$HF_RESOLVE_BASE/$GEMMA_4_REPO/resolve/$GEMMA_4_REVISION/$fileName"
@@ -128,30 +128,28 @@ object LocalModelRegistry {
     val GEMMA_4_SPEC = LocalModelSpec(
         id = GEMMA_4_E2B_ID,
         canonicalId = GEMMA_4_CANONICAL_ID,
-        legacyAliases = listOf("gemma4", "gemma_4", "gemma_3_1b_it", "gemma3_1b"),
+        legacyAliases = listOf("gemma4", "gemma_4"),
         displayName = "Gemma 4 E2B",
         upstreamRepo = GEMMA_4_REPO,
         upstreamRevision = GEMMA_4_REVISION,
-        description = "Google Gemma 4 E2B Multimodal Vision-Language Model for LiteRT-LM (CPU/GPU generic runtime, 2.59 GB)",
+        description = "Google Gemma 4 E2B multimodal vision-language model for LiteRT-LM image understanding (2.59 GB; 8 GB RAM-class device minimum).",
         taskType = ModelTaskType.VISION_LANGUAGE,
         architecture = ModelArchitecture.GEMMA4,
-        license = "Gemma Terms of Use",
+        license = "Apache-2.0",
         subdir = "models/gemma_4_e2b",
         manifestFileName = "gemma4_manifest.json",
         testTagPrefix = "gemma",
-        hasRuntimeAdapter = false, // Assets downloaded — runtime unavailable (LiteRT-LM runtime adapter not active)
+        hasRuntimeAdapter = true, // Gemma4RuntimeAdapter performs real LiteRT-LM image inference.
         artifacts = listOf(
             LocalModelArtifact(
                 relativePath = "gemma-4-E2B-it.litertlm",
                 sourceUrl = gemma4Url("gemma-4-E2B-it.litertlm"),
-                exactBytes = 2_781_778_740L,
+                exactBytes = 2_588_147_712L,
                 role = ArtifactRole.LITERT_MODEL
             )
         )
     )
 
-    // Backwards-compatibility alias
-    val GEMMA_3_SPEC = GEMMA_4_SPEC
 
     // --------------------------------------------------------------------------
     // 3. Liquid AI LFM2.5-VL-450M-Extract (llama.cpp)
@@ -167,7 +165,7 @@ object LocalModelRegistry {
     val LFM2_5_SPEC = LocalModelSpec(
         id = LFM2_5_VL_ID,
         canonicalId = LFM2_5_CANONICAL_ID,
-        legacyAliases = listOf("lfm2_5", "lfm2_5_vl", "lfm2_350m", "lfm2_350m_extract"),
+        legacyAliases = listOf("lfm2_5", "lfm2_5_vl"),
         displayName = "LFM2.5-VL-450M-Extract",
         upstreamRepo = LFM2_5_REPO,
         upstreamRevision = LFM2_5_REVISION,
@@ -195,8 +193,6 @@ object LocalModelRegistry {
         )
     )
 
-    // Backwards-compatibility alias
-    val LFM2_SPEC = LFM2_5_SPEC
 
     // --------------------------------------------------------------------------
     // 4. Alibaba Qwen 3.5 0.8B (llama.cpp / Unsloth)
@@ -212,7 +208,7 @@ object LocalModelRegistry {
     val QWEN3_5_SPEC = LocalModelSpec(
         id = QWEN3_5_ID,
         canonicalId = QWEN3_5_CANONICAL_ID,
-        legacyAliases = listOf("qwen3_5", "qwen3.5-0.8b", "qwen2_5_0_5b", "qwen2_5_05b"),
+        legacyAliases = listOf("qwen3_5", "qwen3.5-0.8b"),
         displayName = "Qwen3.5-0.8B",
         upstreamRepo = QWEN3_5_REPO,
         upstreamRevision = QWEN3_5_REVISION,
@@ -240,8 +236,6 @@ object LocalModelRegistry {
         )
     )
 
-    // Backwards-compatibility alias
-    val QWEN_2_5_SPEC = QWEN3_5_SPEC
 
     val ALL_MODELS: List<LocalModelSpec> = listOf(
         GEMMA_4_SPEC,
@@ -258,6 +252,15 @@ object LocalModelRegistry {
                     spec.legacyAliases.any { it.equals(normalized, ignoreCase = true) }
         }
     }
+
+    private val retiredLocalModelIds = setOf(
+        "gemma_3_1b_it", "gemma3_1b",
+        "lfm2_350m", "lfm2_350m_extract",
+        "qwen2_5_0_5b", "qwen2_5_05b"
+    )
+
+    fun isRetiredLocalModelId(id: String): Boolean =
+        id.trim().lowercase() in retiredLocalModelIds
 
     fun getSpec(idOrAlias: String): LocalModelSpec {
         return findSpec(idOrAlias)
