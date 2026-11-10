@@ -151,9 +151,11 @@ fun AiTaggingCard(
 
     // Device-class check only. Runtime adapters perform their own live free-memory checks
     // immediately before model initialization.
-    val selectedModelMemoryError = availableModels
-        .firstOrNull { it.id == selectedModelId }
-        ?.compatibilityMessage
+    val selectedModelOption = availableModels.firstOrNull { it.id == selectedModelId }
+    val isCloud = selectedModelOption?.isLocalAiModel == false
+    val currentModelState = allModelStates[selectedModelId] ?: LocalModelManager.getModelState(selectedModelId)
+
+    val selectedModelMemoryError = selectedModelOption?.compatibilityMessage
 
     val isModelInstalled = when {
         isCloud -> true
