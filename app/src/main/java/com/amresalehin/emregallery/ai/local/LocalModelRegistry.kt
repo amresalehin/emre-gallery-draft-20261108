@@ -116,7 +116,7 @@ object LocalModelRegistry {
         subdir = "models/lfm2_5_vl_450m_extract",
         manifestFileName = "lfm2_5_manifest.json",
         testTagPrefix = "lfm",
-        hasRuntimeAdapter = false, // Assets downloaded — runtime unavailable (llama.cpp runtime adapter not active)
+        hasRuntimeAdapter = true, // Lfm25VlRuntimeAdapter performs real llama.cpp MTMD image extraction.
         artifacts = listOf(
             LocalModelArtifact(
                 relativePath = "LFM2.5-VL-450M-Extract-Q4_K_M.gguf",
