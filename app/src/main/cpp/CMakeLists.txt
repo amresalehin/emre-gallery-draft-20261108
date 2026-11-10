@@ -12,10 +12,26 @@ FetchContent_Declare(
     llama_cpp
     URL https://github.com/ggml-org/llama.cpp/archive/2496f9c14965c39589f53eea31bdb6d762b1d360.tar.gz
 )
+
+# llama.cpp is embedded as a subproject, so its standalone-only release
+# metadata is not populated by the upstream top-level CMakeLists.txt.
+# mtmd requires this version when declaring its shared library properties.
+# Keep it explicit and deterministic for this pinned upstream revision.
+set(LLAMA_BUILD_NUMBER 9049)
+set(LLAMA_INSTALL_VERSION 0.0.9049)
+
+# Build the core llama + GGML libraries and the mtmd multimodal library,
+# but do not build the upstream command-line tools or examples.
+set(LLAMA_BUILD_COMMON OFF CACHE BOOL "" FORCE)
+set(LLAMA_BUILD_TOOLS OFF CACHE BOOL "" FORCE)
+set(LLAMA_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(LLAMA_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+set(LLAMA_BUILD_SERVER OFF CACHE BOOL "" FORCE)
+
 FetchContent_MakeAvailable(llama_cpp)
 
-# llama.cpp's mtmd library is intentionally not included when its full tools
-# build is disabled. Add only the multimodal library needed by this app.
+# Upstream adds mtmd only as part of LLAMA_BUILD_TOOLS. Add the library
+# directly after the core llama targets are available.
 if(NOT TARGET mtmd)
     add_subdirectory(
         "${llama_cpp_SOURCE_DIR}/tools/mtmd"
