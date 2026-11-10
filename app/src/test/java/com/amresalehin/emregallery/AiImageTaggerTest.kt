@@ -1,6 +1,8 @@
 package com.amresalehin.emregallery
 
 import com.amresalehin.emregallery.ai.local.LocalModelRegistry
+import com.amresalehin.emregallery.ai.local.Qwen35RuntimeAdapter
+import com.amresalehin.emregallery.data.LocalModelManager
 import com.amresalehin.emregallery.ai.tagging.AiImageTagger
 import com.amresalehin.emregallery.data.CloudAiProvider
 import com.amresalehin.emregallery.data.CloudProviderStatus
@@ -305,6 +307,29 @@ class AiImageTaggerTest {
         assertTrue("Tags should contain lake", tags.contains("lake"))
         assertTrue("Tags should contain mountains", tags.contains("mountains"))
         assertTrue("Tags should contain alpine", tags.contains("alpine"))
+    }
+
+    @Test
+    fun testAllFourRuntimeModelsAreAvailableToTheTaggingSelector() {
+        val selectableLocalIds = LocalModelManager.SUPPORTED_MODELS
+            .filter { it.hasRuntimeAdapter }
+            .map { it.id }
+            .toSet()
+
+        assertTrue(selectableLocalIds.contains(LocalModelRegistry.MINI_CPM_V46_ID))
+        assertTrue(selectableLocalIds.contains(LocalModelRegistry.GEMMA_4_E2B_ID))
+        assertTrue(selectableLocalIds.contains(LocalModelRegistry.LFM2_5_VL_ID))
+        assertTrue(selectableLocalIds.contains(LocalModelRegistry.QWEN3_5_ID))
+        assertEquals("All four implemented local image runtimes must be offered", 4, selectableLocalIds.size)
+    }
+
+    @Test
+    fun testQwenDeviceCompatibilityIsSeparateFromTransientAvailableMemory() {
+        val belowMinimum = Qwen35RuntimeAdapter.deviceClassRequirementMessage(3L * 1024L * 1024L * 1024L)
+        val aboveMinimum = Qwen35RuntimeAdapter.deviceClassRequirementMessage(4L * 1024L * 1024L * 1024L)
+
+        assertNotNull("A device below the 3.5 GB class must be marked incompatible", belowMinimum)
+        assertNull("A device above the 3.5 GB class remains device-compatible", aboveMinimum)
     }
 
     @Test
