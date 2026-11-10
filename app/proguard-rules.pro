@@ -27,3 +27,6 @@
 
 # MiniCPM-V 4.6 JNI entry points are resolved by the generated Kotlin object class name.
 -keep class com.amresalehin.emregallery.ai.local.MiniCpmV46Native { *; }
+
+# LFM2.5 JNI entry points are resolved by the generated Kotlin object class name.
+-keep class com.amresalehin.emregallery.ai.local.Lfm25VlNative { *; }
