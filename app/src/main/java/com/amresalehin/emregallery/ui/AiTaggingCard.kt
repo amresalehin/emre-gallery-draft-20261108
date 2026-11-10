@@ -31,6 +31,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.amresalehin.emregallery.ai.local.Gemma4RuntimeAdapter
 import com.amresalehin.emregallery.ai.tagging.AiTaggingSettings
 import com.amresalehin.emregallery.data.FlorenceModelManager
 import com.amresalehin.emregallery.data.FlorenceStatus
@@ -94,19 +95,16 @@ fun AiTaggingCard(
         FlorenceModelManager.refreshAllStates(context)
     }
 
-    // If legacy smart_vision was selected, migrate to Florence-2
+    // Legacy smart_vision now migrates to the working local image model.
     if (selectedModelId == "smart_vision") {
-        selectedModelId = AiTaggingSettings.MODEL_FLORENCE_2
-        AiTaggingSettings.setSelectedModel(context, AiTaggingSettings.MODEL_FLORENCE_2)
+        selectedModelId = AiTaggingSettings.MODEL_GEMMA_4
+        AiTaggingSettings.setSelectedModel(context, AiTaggingSettings.MODEL_GEMMA_4)
     }
 
-    // List of available models (The 4 downloaded on-device models + Cloud models)
+    // Only offer local models that implement actual image-to-text inference.
     val availableModels = remember(activeCloudProvider, cloudProviders) {
         val models = mutableListOf(
-            TaggingModelOption(AiTaggingSettings.MODEL_FLORENCE_2, "Florence-2", isLocalAiModel = true),
-            TaggingModelOption(AiTaggingSettings.MODEL_GEMMA_4, "Gemma 4", isLocalAiModel = true),
-            TaggingModelOption(AiTaggingSettings.MODEL_LFM_2_5, "LFM2.5-VL", isLocalAiModel = true),
-            TaggingModelOption(AiTaggingSettings.MODEL_QWEN_3_5, "Qwen3.5", isLocalAiModel = true)
+            TaggingModelOption(AiTaggingSettings.MODEL_GEMMA_4, "Gemma 4 E2B", isLocalAiModel = true)
         )
         cloudProviders.forEach { provider ->
             val label = if (provider.modelId.isNotBlank()) {
@@ -247,19 +245,31 @@ fun AiTaggingCard(
                                 !isModelInstalled -> {
                                     scope.launch {
                                         val modelName = availableModels.firstOrNull { it.id == selectedModelId }?.displayName ?: selectedModelId
-                                        onShowSnackbar?.invoke("Downloading $modelName model...")
-                                        val ok = FlorenceModelManager.downloadAndInstallModel(context, selectedModelId)
-                                        if (ok) {
-                                            onShowSnackbar?.invoke("$modelName model ready")
+                                        val memoryError = Gemma4RuntimeAdapter.deviceClassRequirementMessage(context)
+                                        if (selectedModelId == AiTaggingSettings.MODEL_GEMMA_4 && memoryError != null) {
+                                            onShowSnackbar?.invoke(memoryError)
                                         } else {
-                                            val state = FlorenceModelManager.getModelState(selectedModelId)
-                                            onShowSnackbar?.invoke(state.errorMessage ?: "Download failed")
+                                            onShowSnackbar?.invoke("Downloading $modelName model...")
+                                            val ok = FlorenceModelManager.downloadAndInstallModel(context, selectedModelId)
+                                            if (ok) {
+                                                onShowSnackbar?.invoke("$modelName model ready")
+                                            } else {
+                                                val state = FlorenceModelManager.getModelState(selectedModelId)
+                                                onShowSnackbar?.invoke(state.errorMessage ?: "Download failed")
+                                            }
                                         }
                                     }
                                 }
                                 isRunning -> onStopTagging()
                                 isCompleted -> showActionMenu = true
-                                else -> triggerTagging(false)
+                                else -> {
+                                    val memoryError = Gemma4RuntimeAdapter.deviceClassRequirementMessage(context)
+                                    if (selectedModelId == AiTaggingSettings.MODEL_GEMMA_4 && memoryError != null) {
+                                        onShowSnackbar?.invoke(memoryError)
+                                    } else {
+                                        triggerTagging(false)
+                                    }
+                                }
                             }
                         },
                         shape = RoundedCornerShape(14.dp),
