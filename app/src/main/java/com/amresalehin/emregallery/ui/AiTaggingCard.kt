@@ -130,6 +130,12 @@ fun AiTaggingCard(
             cloudProviders.any { it.id == selectedModelId }
     val currentModelState = allModelStates[selectedModelId] ?: LocalModelManager.getModelState(selectedModelId)
 
+    val selectedModelMemoryError = when (selectedModelId) {
+        AiTaggingSettings.MODEL_MINI_CPM_V46 -> MiniCpmV46RuntimeAdapter.deviceClassRequirementMessage(context)
+        AiTaggingSettings.MODEL_GEMMA_4 -> Gemma4RuntimeAdapter.deviceClassRequirementMessage(context)
+        else -> null
+    }
+
     val isModelInstalled = when {
         isCloud -> true
         else -> LocalModelManager.isInstalled(context, selectedModelId) || currentModelState.status.isUsable
