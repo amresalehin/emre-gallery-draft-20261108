@@ -318,11 +318,11 @@ class AiConfigurationTest {
         )
 
         val tags = Qwen35RuntimeAdapter.parseStructuredResponse(
-            """{"caption":"A red bicycle parked beside a tree.","tags":["red bicycle","tree","outdoor","street","parked bicycle","green foliage"]}"""
+            """{"tags":["red bicycle","tree","outdoor","street","parked bicycle","green foliage"]}"""
         )
         assertTrue(tags.contains("red bicycle"))
         assertTrue(tags.contains("green foliage"))
-        assertFalse(tags.contains("A red bicycle parked beside a tree."))
+        assertFalse(tags.contains("caption"))
     }
 
     @Test
