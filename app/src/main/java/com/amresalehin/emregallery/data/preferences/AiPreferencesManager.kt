@@ -13,7 +13,6 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
-import kotlinx.coroutines.flow.onEach
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -25,9 +24,7 @@ class AiPreferencesManager(private val context: Context) {
     val cloudProviders: Flow<List<CloudAiProvider>> = context.galleryDataStore.data.map { prefs ->
         val raw = prefs[cloudProvidersKey] ?: return@map emptyList()
         parseProvidersJson(raw)
-    }.distinctUntilChanged().onEach {
-        migrateLegacyApiKeys()
-    }
+    }.distinctUntilChanged()
 
     val activeProviderId: Flow<String?> = context.galleryDataStore.data.map { prefs ->
         prefs[activeProviderIdKey]
@@ -140,22 +137,6 @@ class AiPreferencesManager(private val context: Context) {
         }
     }
 
-    private suspend fun migrateLegacyApiKeys() {
-        context.galleryDataStore.edit { prefs ->
-            val raw = prefs[cloudProvidersKey] ?: return@edit
-            val needsMigration = runCatching {
-                val array = JSONArray(raw)
-                (0 until array.length()).any { index ->
-                    val key = array.optJSONObject(index)?.optString("apiKey").orEmpty()
-                    key.isNotBlank() && !CloudApiKeyVault.isEncrypted(key)
-                }
-            }.getOrDefault(false)
-            if (needsMigration) {
-                prefs[cloudProvidersKey] = serializeProvidersJson(parseProvidersJson(raw))
-            }
-        }
-    }
-
     private fun parseProvidersJson(jsonStr: String): List<CloudAiProvider> {
         if (jsonStr.isBlank()) return emptyList()
         return try {
@@ -170,7 +151,7 @@ class AiPreferencesManager(private val context: Context) {
                         id = obj.getString("id"),
                         name = obj.getString("name"),
                         baseUrl = obj.getString("baseUrl"),
-                        apiKey = CloudApiKeyVault.decryptIfNeeded(obj.optString("apiKey", "")),
+                        apiKey = obj.optString("apiKey", ""),
                         modelId = obj.getString("modelId"),
                         isActive = obj.optBoolean("isActive", false),
                         status = status,
@@ -192,7 +173,7 @@ class AiPreferencesManager(private val context: Context) {
                 put("id", p.id)
                 put("name", p.name)
                 put("baseUrl", p.baseUrl)
-                put("apiKey", CloudApiKeyVault.encryptForStorage(p.apiKey))
+                put("apiKey", p.apiKey)
                 put("modelId", p.modelId)
                 put("isActive", p.isActive)
                 put("status", p.status.name)

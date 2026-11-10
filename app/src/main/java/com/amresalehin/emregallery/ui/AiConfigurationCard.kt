@@ -267,11 +267,11 @@ fun AiConfigurationCard(
                                 horizontalArrangement = Arrangement.spacedBy(6.dp)
                             ) {
                                 val presets = listOf(
-                                    Triple("Google Gemini", "https://generativelanguage.googleapis.com/v1beta", "gemini-3.8-flash"),
-                                    Triple("OpenAI", "https://api.openai.com/v1", "gpt-6.1-sol"),
-                                    Triple("Groq", "https://api.groq.com/openai/v1", "qwen/qwen3.8-27b"),
-                                    Triple("Ollama", "http://localhost:11434/v1", "qwen2.5vl:3b"),
-                                    Triple("OpenRouter", "https://openrouter.ai/api/v1", "google/gemini-3.8-flash")
+                                    Triple("Google Gemini", "https://generativelanguage.googleapis.com/v1beta/openai", "gemini-1.5-flash"),
+                                    Triple("OpenAI", "https://api.openai.com/v1", "gpt-4o-mini"),
+                                    Triple("Groq", "https://api.groq.com/openai/v1", "llama-3.2-11b-vision-preview"),
+                                    Triple("Ollama", "http://localhost:11434/v1", "llava"),
+                                    Triple("OpenRouter", "https://openrouter.ai/api/v1", "google/gemini-flash-1.5")
                                 )
                                 presets.forEach { (pName, pUrl, pModel) ->
                                     Surface(

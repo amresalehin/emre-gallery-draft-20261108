@@ -86,8 +86,7 @@ class AiConfigurationTest {
         mockWebServer.enqueue(
             MockResponse()
                 .setResponseCode(200)
-                .setHeader("Content-Type", "application/json")
-                .setBody("""{"choices":[{"message":{"content":"gray square, neutral background, simple texture"}}]}""")
+                .setBody("""{"data":[{"id":"gpt-4o"}]}""")
         )
 
         val testBaseUrl = mockWebServer.url("/v1").toString()
@@ -100,17 +99,11 @@ class AiConfigurationTest {
 
         val result = CloudAiConnectionTester.testConnection(provider)
         assertEquals(CloudProviderStatus.CONNECTED, result.status)
-        assertTrue(result.message.contains("Vision ready"))
+        assertTrue(result.message.contains("Connected (HTTP 200"))
         assertTrue(result.latencyMs >= 0L)
 
         val recordedRequest = mockWebServer.takeRequest()
         assertEquals("Bearer test-token", recordedRequest.getHeader("Authorization"))
-        assertEquals("/v1/chat/completions", recordedRequest.path)
-        val body = JSONObject(recordedRequest.body.readUtf8())
-        assertEquals("gpt-4o", body.getString("model"))
-        val messageContent = body.getJSONArray("messages").getJSONObject(0).getJSONArray("content")
-        assertEquals("image_url", messageContent.getJSONObject(1).getString("type"))
-        assertTrue(messageContent.getJSONObject(1).getJSONObject("image_url").getString("url").startsWith("data:image/jpeg;base64,"))
     }
 
     @Test
@@ -118,7 +111,6 @@ class AiConfigurationTest {
         mockWebServer.enqueue(
             MockResponse()
                 .setResponseCode(401)
-                .setHeader("Content-Type", "application/json")
                 .setBody("""{"error":{"message":"Invalid API key"}}""")
         )
 
@@ -132,7 +124,7 @@ class AiConfigurationTest {
 
         val result = CloudAiConnectionTester.testConnection(provider)
         assertEquals(CloudProviderStatus.ERROR, result.status)
-        assertTrue(result.message.contains("HTTP 401"))
+        assertTrue(result.message.contains("Unauthorized (HTTP 401)"))
     }
 
     @Test
