@@ -13,7 +13,7 @@
 
 namespace {
 constexpr const char * kTag = "EmreMiniCPM";
-constexpr int32_t kContextSize = 4096;
+constexpr int32_t kContextSize = 8192;
 constexpr int32_t kBatchSize = 1024;
 constexpr int32_t kThreads = 4;
 
