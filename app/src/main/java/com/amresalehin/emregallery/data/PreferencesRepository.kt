@@ -19,7 +19,7 @@ val Context.galleryDataStore: DataStore<Preferences> by preferencesDataStore(nam
  * - [vaultPrefs]: Security, locked folder PIN hash, and biometrics
  * - [ocrPrefs]: OCR models, languages, and engines
  * - [mediaPrefs]: Albums, tags, people, favorites, trash bin, archive, and search history
- * - [aiPrefs]: Cloud AI providers, active models, and local Florence-2 model status
+ * - [aiPrefs]: Cloud AI providers, active models, and local model status
  */
 class PreferencesRepository(context: Context) {
 
@@ -109,7 +109,7 @@ class PreferencesRepository(context: Context) {
     // --- AI Configuration & Models ---
     val cloudProviders: Flow<List<com.amresalehin.emregallery.data.CloudAiProvider>> get() = aiPrefs.cloudProviders
     val activeCloudProvider: Flow<com.amresalehin.emregallery.data.CloudAiProvider?> get() = aiPrefs.activeProvider
-    val florenceModelState: Flow<com.amresalehin.emregallery.data.FlorenceModelState> get() = aiPrefs.florenceModelState
+    val localModelState: Flow<com.amresalehin.emregallery.data.LocalModelState> get() = aiPrefs.localModelState
 
     suspend fun saveCloudProvider(provider: com.amresalehin.emregallery.data.CloudAiProvider) = aiPrefs.saveProvider(provider)
     suspend fun setActiveCloudProvider(providerId: String) = aiPrefs.setActiveProvider(providerId)
