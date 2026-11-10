@@ -1139,7 +1139,6 @@ fun OverviewTabContent(
                                     LocationProvenanceRow(
                                         label = "Location Source",
                                         value = when {
-                                            prov.source?.contains("timeline", ignoreCase = true) == true -> "Google Timeline"
                                             prov.source?.contains("exif", ignoreCase = true) == true -> "EXIF Metadata"
                                             else -> prov.source ?: "Unknown source"
                                         }
@@ -1149,7 +1148,7 @@ fun OverviewTabContent(
                                         value = when (prov.matchMethod?.lowercase()) {
                                             "interpolated" -> "Interpolated path"
                                             "staypoint" -> "Staypoint visit"
-                                            "nearest" -> "Nearest timeline sample"
+                                            "nearest" -> "Nearest sample"
                                             "existing_exif" -> "Existing EXIF"
                                             else -> prov.matchMethod ?: "Matched"
                                         }

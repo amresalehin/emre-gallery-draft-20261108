@@ -25,7 +25,6 @@ class PreferencesRepository(context: Context) {
     private val vaultPrefs = VaultPreferencesManager(context)
     private val ocrPrefs = OcrPreferencesManager(context)
     private val mediaPrefs = MediaCollectionsPreferencesManager(context)
-    val geotagPrefs = com.amresalehin.emregallery.data.preferences.GeotagPreferencesManager(context)
 
     // --- Onboarding & UI Navigation ---
     fun isWelcomeCompletedSync(): Boolean = uiPrefs.isWelcomeCompletedSync()

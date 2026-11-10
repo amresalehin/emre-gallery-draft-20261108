@@ -155,14 +155,6 @@ fun SettingsScreen(
         "buffalo".contains(query, ignoreCase = true) ||
         "ente".contains(query, ignoreCase = true)
 
-    val matchesGeoTimeline = query.isBlank() ||
-        "geo timeline".contains(query, ignoreCase = true) ||
-        "timeline".contains(query, ignoreCase = true) ||
-        "geotag".contains(query, ignoreCase = true) ||
-        "gps".contains(query, ignoreCase = true) ||
-        "utc".contains(query, ignoreCase = true) ||
-        "exif".contains(query, ignoreCase = true)
-
     val otherEntries = listOf(
         "About" to Icons.Default.Info
     ).filter { it.first.contains(query, ignoreCase = true) }
@@ -309,20 +301,6 @@ fun SettingsScreen(
                 }
             }
 
-            // 4. GEO TIMELINE CARD
-            if (matchesGeoTimeline) {
-                item(key = "geo_timeline_card") {
-                    GeoTimelineCard(
-                        media = media,
-                        cardBackground = cardBackground,
-                        cardBorder = cardBorder,
-                        availableFolders = availableFolders,
-                        initiallyExpanded = query.isNotBlank() && matchesGeoTimeline,
-                        onShowSnackbar = onShowSnackbar
-                    )
-                }
-            }
-
             // 7. OTHER SETTINGS TILES ("About")
             items(otherEntries, key = { it.first }) { (label, icon) ->
                 AestheticSettingsTile(
@@ -336,7 +314,7 @@ fun SettingsScreen(
             }
 
             // Empty search state
-            if (!matchesTheme && !matchesOcr && !matchesFace && !matchesGeoTimeline && otherEntries.isEmpty() && query.isNotBlank()) {
+            if (!matchesTheme && !matchesOcr && !matchesFace && otherEntries.isEmpty() && query.isNotBlank()) {
                 item {
                     Box(
                         modifier = Modifier

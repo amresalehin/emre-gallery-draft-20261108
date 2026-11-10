@@ -376,7 +376,7 @@ fun PocketScreen(
                                     )
                             val hasActiveFilters = filterType != "All" || sortOrder != "Newest" || showSvg ||
                                     !showVideos || !showStreams || !showPng || !showGif ||
-                                    minWidth > 0 || minHeight > 0 || minSizeKb != PocketRepository.DEFAULT_MIN_SIZE_KB
+                                    minWidth != PocketRepository.DEFAULT_MIN_WIDTH || minHeight != PocketRepository.DEFAULT_MIN_HEIGHT || minSizeKb != PocketRepository.DEFAULT_MIN_SIZE_KB
 
                             PocketSearchPasteCapsule(
                                 query = searchQuery,
@@ -1047,6 +1047,22 @@ fun PocketBookmarkStaggeredCard(
                             contentScale = ContentScale.Crop,
                             modifier = Modifier.fillMaxSize()
                         )
+                        if (stack.items.isEmpty()) {
+                            Surface(
+                                shape = RoundedCornerShape(8.dp),
+                                color = Color.Black.copy(alpha = 0.65f),
+                                modifier = Modifier
+                                    .align(Alignment.BottomStart)
+                                    .padding(8.dp)
+                            ) {
+                                Text(
+                                    text = "Preview",
+                                    style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp, fontWeight = FontWeight.Bold),
+                                    color = Color.White,
+                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                )
+                            }
+                        }
                     } else if (faviconUrl.isNotBlank()) {
                         Column(
                             horizontalAlignment = Alignment.CenterHorizontally,

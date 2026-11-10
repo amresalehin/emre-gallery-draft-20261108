@@ -111,7 +111,7 @@ class PhotoMapLocationCacheMigrationTest {
             put("latitude", 35.6762)
             put("longitude", 139.6503)
             put("cached_at", 1700000002000L)
-            put("source", "Google Timeline")
+            put("source", "External GPX")
             put("match_method", "interpolated")
             put("resolved_timestamp", 1700000000500L)
             put("timestamp_source", "DateTimeOriginal")

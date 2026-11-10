@@ -286,24 +286,24 @@ fun PocketBookmarkViewerPage(
     ) {
         if (sanitizedStack.items.isNotEmpty()) {
             sanitizedStack.items
-        } else if (sanitizedStack.previewImageUrl.isNotBlank()) {
-            val previewItem = MediaInboxItem(
-                id = "preview_${sanitizedStack.id}",
-                title = sanitizedStack.title.ifBlank { "Preview" },
-                localUri = "",
-                sourceUrl = sanitizedStack.previewImageUrl,
-                isVideo = false
-            )
-            val typeOk = pocketRepo.itemMatchesType(previewItem, showSvg, showVideos, showStreams, showPng, showGif)
-            val dimOk = pocketRepo.itemMatchesDimensions(previewItem, minWidth, minHeight)
-            val sizeOk = pocketRepo.itemMatchesSize(previewItem, minSizeKb)
-            if (typeOk && dimOk && sizeOk) {
+        } else {
+            val previewUrl = sanitizedStack.previewImageUrl.ifBlank {
+                stack.previewImageUrl.ifBlank {
+                    stack.items.firstOrNull()?.sourceUrl ?: ""
+                }
+            }
+            if (previewUrl.isNotBlank()) {
+                val previewItem = MediaInboxItem(
+                    id = "preview_${sanitizedStack.id}",
+                    title = sanitizedStack.title.ifBlank { "Browser Preview" },
+                    localUri = "",
+                    sourceUrl = previewUrl,
+                    isVideo = false
+                )
                 listOf(previewItem)
             } else {
                 emptyList()
             }
-        } else {
-            emptyList()
         }
     }
 
@@ -1423,23 +1423,22 @@ private fun BookmarkDeckCardContent(
                     if (isFront && item != null) {
                         val pocketRepo = remember { PocketRepository.getInstance(context) }
                         val resolvedBytes = remember(item) { pocketRepo.resolveItemSizeBytes(item) }
-                        if (resolvedBytes > 0L) {
-                            Surface(
-                                shape = RoundedCornerShape(8.dp),
-                                color = Color.Black.copy(alpha = 0.65f),
-                                modifier = Modifier
-                                    .align(Alignment.BottomStart)
-                                    .padding(8.dp)
-                            ) {
-                                val sizeFormatted = formatBytes(resolvedBytes)
-                                val formatTag = item.format.ifBlank { if (isCurrentVideo) "VIDEO" else "IMAGE" }
-                                Text(
-                                    text = "$formatTag · $sizeFormatted",
-                                    style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp, fontWeight = FontWeight.Bold),
-                                    color = Color.White,
-                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp)
-                                )
-                            }
+                        val isPreviewFallback = item.id.startsWith("preview_")
+                        val sizeFormatted = if (resolvedBytes > 0L) " · " + formatBytes(resolvedBytes) else ""
+                        val formatTag = if (isPreviewFallback) "BROWSER PREVIEW" else item.format.ifBlank { if (isCurrentVideo) "VIDEO" else "IMAGE" }
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = Color.Black.copy(alpha = 0.65f),
+                            modifier = Modifier
+                                .align(Alignment.BottomStart)
+                                .padding(8.dp)
+                        ) {
+                            Text(
+                                text = "$formatTag$sizeFormatted",
+                                style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp, fontWeight = FontWeight.Bold),
+                                color = Color.White,
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp)
+                            )
                         }
                     }
                 }

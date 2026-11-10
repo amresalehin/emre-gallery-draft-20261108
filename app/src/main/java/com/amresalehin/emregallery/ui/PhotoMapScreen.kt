@@ -217,7 +217,6 @@ fun PhotoMapScreen(
     focusItem: MediaItem? = null,
     onBack: () -> Unit,
     onOpen: (MediaItem) -> Unit,
-    onGeotag: (() -> Unit)? = null,
     viewModel: PhotoMapViewModel = viewModel()
 ) {
     val context = LocalContext.current
@@ -318,11 +317,7 @@ fun PhotoMapScreen(
                         map.invalidate()
                     }
                 },
-                onFitAllPhotos = onFitAllPhotos,
-                includeTimelineGeotags = uiState.includeTimelineGeotags,
-                onToggleTimelineGeotags = {
-                    viewModel.toggleIncludeTimelineGeotags()
-                }
+                onFitAllPhotos = onFitAllPhotos
             )
 
             PhotoMapViewContainer(

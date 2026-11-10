@@ -84,8 +84,6 @@ fun PhotoMapTopBar(
     onDismissLayerMenu: () -> Unit,
     onSelectLayer: (String) -> Unit,
     onFitAllPhotos: () -> Unit,
-    includeTimelineGeotags: Boolean = false,
-    onToggleTimelineGeotags: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     Row(
@@ -145,26 +143,6 @@ fun PhotoMapTopBar(
         ) {
             Box(contentAlignment = Alignment.Center) {
                 Icon(Icons.Default.FilterCenterFocus, contentDescription = "Fit all media", modifier = Modifier.size(18.dp), tint = MaterialTheme.colorScheme.onSurface)
-            }
-        }
-
-        if (onToggleTimelineGeotags != null) {
-            Spacer(Modifier.width(8.dp))
-            Surface(
-                onClick = onToggleTimelineGeotags,
-                shape = CircleShape,
-                color = if (includeTimelineGeotags) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f),
-                border = if (includeTimelineGeotags) BorderStroke(1.5.dp, MaterialTheme.colorScheme.primary) else null,
-                modifier = Modifier.size(38.dp).testTag("photo_map_geotag_button")
-            ) {
-                Box(contentAlignment = Alignment.Center) {
-                    Icon(
-                        Icons.Default.AddLocationAlt,
-                        contentDescription = if (includeTimelineGeotags) "Exclude Timeline geotags" else "Include Timeline geotags",
-                        modifier = Modifier.size(18.dp),
-                        tint = if (includeTimelineGeotags) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface
-                    )
-                }
             }
         }
     }
@@ -332,7 +310,6 @@ private fun SelectedPlaceBar(
                                 }
                             }
                             val sourceLabel = when {
-                                provenance.source?.contains("timeline", ignoreCase = true) == true -> "Timeline"
                                 provenance.source?.contains("exif", ignoreCase = true) == true -> "EXIF"
                                 else -> provenance.source?.take(12) ?: "Source"
                             }

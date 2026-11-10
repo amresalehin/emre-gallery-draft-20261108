@@ -63,38 +63,6 @@ class PhotoMapViewModel(application: Application) : AndroidViewModel(application
         resolved
     }
 
-    private var allLocatedWithProvenance: List<Triple<MediaItem, GeoPoint, com.amresalehin.emregallery.data.LocationProvenance?>> = emptyList()
-
-    private fun isTimelineExtracted(provenance: com.amresalehin.emregallery.data.LocationProvenance?): Boolean {
-        if (provenance == null) return false
-        val src = provenance.source?.lowercase() ?: ""
-        if (src.contains("exif")) return false
-        return provenance.matchMethod != null ||
-            src.contains("timeline") ||
-            src in setOf("records", "place_visit", "activity_segment", "activity_start", "activity_end", "waypoint", "raw_path", "timeline_path", "raw_signal", "visit", "generic")
-    }
-
-    private fun filterLocatedMedia(
-        items: List<Triple<MediaItem, GeoPoint, com.amresalehin.emregallery.data.LocationProvenance?>>,
-        includeTimeline: Boolean
-    ): List<Pair<MediaItem, GeoPoint>> {
-        return if (includeTimeline) {
-            items.map { it.first to it.second }
-        } else {
-            items.filterNot { isTimelineExtracted(it.third) }.map { it.first to it.second }
-        }
-    }
-
-    fun toggleIncludeTimelineGeotags() {
-        val newInclude = !_uiState.value.includeTimelineGeotags
-        _uiState.update {
-            it.copy(
-                includeTimelineGeotags = newInclude,
-                locatedMedia = filterLocatedMedia(allLocatedWithProvenance, newInclude)
-            )
-        }
-    }
-
     fun loadAndScanMedia(media: List<MediaItem>, forceRescan: Boolean = false) {
         indexingJob?.cancel()
         indexingJob = viewModelScope.launch {
@@ -112,19 +80,17 @@ class PhotoMapViewModel(application: Application) : AndroidViewModel(application
 
             val items = media
             val cached = withContext(Dispatchers.IO) { locationCache.loadAll() }
-            val cachedLocatedWithProv = items.mapNotNull { item ->
+            val cachedLocated = items.mapNotNull { item ->
                 val loc = cached[item.uri]
                 if (loc?.point != null) {
-                    Triple(item, loc.point, loc.provenance)
+                    item to loc.point
                 } else null
             }
-            allLocatedWithProvenance = cachedLocatedWithProv
 
             val uncachedItems = if (forceRescan) items else items.filterNot { cached.containsKey(it.uri) }
-            val currentInclude = _uiState.value.includeTimelineGeotags
             _uiState.update {
                 it.copy(
-                    locatedMedia = filterLocatedMedia(cachedLocatedWithProv, currentInclude),
+                    locatedMedia = cachedLocated,
                     scanTotal = uncachedItems.size,
                     loading = uncachedItems.isNotEmpty()
                 )
@@ -136,7 +102,7 @@ class PhotoMapViewModel(application: Application) : AndroidViewModel(application
             }
 
             val context = getApplication<Application>()
-            val resultWithProv = cachedLocatedWithProv.toMutableList()
+            val result = cachedLocated.toMutableList()
             var scanned = 0
 
             for (item in uncachedItems) {
@@ -151,16 +117,16 @@ class PhotoMapViewModel(application: Application) : AndroidViewModel(application
                 }
 
                 if (point != null) {
-                    resultWithProv.add(Triple(item, point, null))
+                    result.add(item to point)
                 }
                 scanned++
 
                 if (scanned % 128 == 0 || scanned == uncachedItems.size) {
-                    allLocatedWithProvenance = resultWithProv.toList()
                     val currentScanned = scanned
+                    val snapshot = result.toList()
                     _uiState.update {
                         it.copy(
-                            locatedMedia = filterLocatedMedia(allLocatedWithProvenance, it.includeTimelineGeotags),
+                            locatedMedia = snapshot,
                             scanProgress = currentScanned
                         )
                     }
@@ -168,10 +134,9 @@ class PhotoMapViewModel(application: Application) : AndroidViewModel(application
                 }
             }
 
-            allLocatedWithProvenance = resultWithProv.toList()
             _uiState.update {
                 it.copy(
-                    locatedMedia = filterLocatedMedia(allLocatedWithProvenance, it.includeTimelineGeotags),
+                    locatedMedia = result.toList(),
                     scanProgress = uncachedItems.size,
                     loading = false
                 )

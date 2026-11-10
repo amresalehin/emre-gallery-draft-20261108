@@ -49,10 +49,18 @@ class PocketRepository(
     private val _showGif = MutableStateFlow(prefs.getBoolean(KEY_SHOW_GIF, true))
     val showGif: StateFlow<Boolean> = _showGif.asStateFlow()
 
-    private val _minWidth = MutableStateFlow(prefs.getInt(KEY_MIN_WIDTH, 0))
+    private val _minWidth = MutableStateFlow(
+        prefs.getInt(KEY_MIN_WIDTH, DEFAULT_MIN_WIDTH).let {
+            if (it <= 0 && !prefs.getBoolean("pocket_dim_filter_explicitly_set_zero", false)) DEFAULT_MIN_WIDTH else it
+        }
+    )
     val minWidth: StateFlow<Int> = _minWidth.asStateFlow()
 
-    private val _minHeight = MutableStateFlow(prefs.getInt(KEY_MIN_HEIGHT, 0))
+    private val _minHeight = MutableStateFlow(
+        prefs.getInt(KEY_MIN_HEIGHT, DEFAULT_MIN_HEIGHT).let {
+            if (it <= 0 && !prefs.getBoolean("pocket_dim_filter_explicitly_set_zero", false)) DEFAULT_MIN_HEIGHT else it
+        }
+    )
     val minHeight: StateFlow<Int> = _minHeight.asStateFlow()
 
     private val _minSizeKb = MutableStateFlow(prefs.getInt(KEY_MIN_SIZE_KB, DEFAULT_MIN_SIZE_KB))
@@ -85,12 +93,18 @@ class PocketRepository(
 
     fun setMinWidth(width: Int) {
         _minWidth.value = width
-        prefs.edit().putInt(KEY_MIN_WIDTH, width).apply()
+        prefs.edit()
+            .putInt(KEY_MIN_WIDTH, width)
+            .putBoolean("pocket_dim_filter_explicitly_set_zero", width == 0)
+            .apply()
     }
 
     fun setMinHeight(height: Int) {
         _minHeight.value = height
-        prefs.edit().putInt(KEY_MIN_HEIGHT, height).apply()
+        prefs.edit()
+            .putInt(KEY_MIN_HEIGHT, height)
+            .putBoolean("pocket_dim_filter_explicitly_set_zero", height == 0)
+            .apply()
     }
 
     private val sizeCache = ConcurrentHashMap<String, Long>()
@@ -379,6 +393,10 @@ class PocketRepository(
             typeOk && dimOk && sizeOk
         }
 
+        val browserPreview = stack.previewImageUrl.ifBlank {
+            stack.items.firstOrNull()?.sourceUrl ?: ""
+        }
+
         val previewIsSvg = stack.previewImageUrl.isNotBlank() && MediaClassifier.isSvg(stack.previewImageUrl)
         val previewDimMatch = if (stack.previewImageUrl.isNotBlank() && (minWidth > 0 || minHeight > 0)) {
             val (pw, ph) = parseDimensionsFromText(stack.previewImageUrl)
@@ -400,10 +418,16 @@ class PocketRepository(
 
         val previewValid = previewTypeMatch && previewDimMatch && previewSizeMatch
 
-        val sanitizedPreview = if (previewValid && stack.previewImageUrl.isNotBlank()) {
-            stack.previewImageUrl
+        // If no media is able to fulfil the criteria, show the browser preview
+        val sanitizedPreview = if (filteredItems.isNotEmpty()) {
+            if (previewValid && stack.previewImageUrl.isNotBlank()) {
+                stack.previewImageUrl
+            } else {
+                filteredItems.firstOrNull()?.sourceUrl ?: ""
+            }
         } else {
-            filteredItems.firstOrNull()?.sourceUrl ?: ""
+            // No media fulfilled the criteria -> show browser preview
+            browserPreview
         }
 
         return stack.copy(items = filteredItems, previewImageUrl = sanitizedPreview)
@@ -871,6 +895,8 @@ class PocketRepository(
         private const val KEY_MIN_WIDTH = "pocket_filter_min_width"
         private const val KEY_MIN_HEIGHT = "pocket_filter_min_height"
         private const val KEY_MIN_SIZE_KB = "pocket_filter_min_size_kb"
+        const val DEFAULT_MIN_WIDTH = 480
+        const val DEFAULT_MIN_HEIGHT = 540
         const val DEFAULT_MIN_SIZE_KB = 10
 
         @Volatile

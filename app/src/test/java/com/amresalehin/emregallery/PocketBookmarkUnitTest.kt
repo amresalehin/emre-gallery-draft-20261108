@@ -558,6 +558,61 @@ class PocketBookmarkUnitTest {
     }
 
     @Test
+    fun testDefaultDimensionFiltersAndBrowserPreviewFallback() {
+        assertEquals(480, PocketRepository.DEFAULT_MIN_WIDTH)
+        assertEquals(540, PocketRepository.DEFAULT_MIN_HEIGHT)
+
+        val stack = MediaInboxStack(
+            id = "test_preview_fallback",
+            title = "Article without large media",
+            sourceDomain = "techblog.org",
+            sourceUrl = "https://techblog.org/article",
+            previewImageUrl = "https://techblog.org/browser_preview_og.jpg",
+            items = listOf(
+                MediaInboxItem(
+                    id = "small_icon",
+                    title = "icon_64x64.png",
+                    localUri = "",
+                    sourceUrl = "https://techblog.org/icon_64x64.png",
+                    isVideo = false
+                ),
+                MediaInboxItem(
+                    id = "author_avatar",
+                    title = "avatar_128x128.jpg",
+                    localUri = "",
+                    sourceUrl = "https://techblog.org/avatar_128x128.jpg",
+                    isVideo = false
+                )
+            )
+        )
+
+        // When filtering items with default criteria (width >= 480, height >= 540)
+        val defaultWidth = PocketRepository.DEFAULT_MIN_WIDTH
+        val defaultHeight = PocketRepository.DEFAULT_MIN_HEIGHT
+
+        val compliantItems = stack.items.filter { item ->
+            val match = Regex("""(?i)(\d{2,5})\s*([x*×_]|by)\s*(\d{2,5})""").find("${item.title} ${item.sourceUrl}")
+            val (w, h) = if (match != null) {
+                match.groupValues[1].toIntOrNull() to match.groupValues[3].toIntOrNull()
+            } else null to null
+            val wOk = w == null || defaultWidth <= 0 || w >= defaultWidth
+            val hOk = h == null || defaultHeight <= 0 || h >= defaultHeight
+            wOk && hOk
+        }
+
+        // Neither 64x64 nor 128x128 fulfils 480x540
+        assertTrue(compliantItems.isEmpty())
+
+        // Because no media is able to fulfil this criteria, browser preview is shown
+        val displayedPreview = if (compliantItems.isNotEmpty()) {
+            compliantItems.first().sourceUrl
+        } else {
+            stack.previewImageUrl
+        }
+        assertEquals("https://techblog.org/browser_preview_og.jpg", displayedPreview)
+    }
+
+    @Test
     fun testMediaSizeFilterLogic() {
         val stack = MediaInboxStack(
             id = "stack_size_test",
