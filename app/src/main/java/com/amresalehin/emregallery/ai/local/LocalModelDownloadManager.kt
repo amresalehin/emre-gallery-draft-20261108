@@ -81,6 +81,13 @@ object LocalModelDownloadManager {
 
                 if (status == 416) {
                     val serverLength = parseUnsatisfiedRange(connection.getHeaderField("Content-Range"))
+                    if (serverLength != null && expectedBytes != null && serverLength != expectedBytes) {
+                        clearPartialFile(destination)
+                        throw IOException(
+                            "Remote artifact size mismatch: manifest expects " + expectedBytes +
+                                " bytes, but the server reports " + serverLength + " bytes."
+                        )
+                    }
                     if (serverLength != null && destination.isFile &&
                         destination.length() == serverLength &&
                         (expectedBytes == null || serverLength == expectedBytes)
@@ -175,9 +182,17 @@ object LocalModelDownloadManager {
                 throw cancelled
             } catch (failure: IOException) {
                 val message = failure.message.orEmpty()
-                val isRetryable = message.startsWith("Temporary HTTP ") ||
-                    message.startsWith("HTTP 416:") ||
-                    !message.startsWith("HTTP ")
+                val isFatalSizeMismatch = message.startsWith("Remote artifact size mismatch:") ||
+                    message.startsWith("Content-Range total mismatch.") ||
+                    message.startsWith("Invalid Content-Range start.") ||
+                    message.startsWith("Content-Length does not match Content-Range span.") ||
+                    message.startsWith("SHA-256 mismatch") ||
+                    message.startsWith("MD5 mismatch")
+                val isRetryable = !isFatalSizeMismatch && (
+                    message.startsWith("Temporary HTTP ") ||
+                        message.startsWith("HTTP 416:") ||
+                        !message.startsWith("HTTP ")
+                    )
                 if (!isRetryable || attempt == MAX_ATTEMPTS) throw failure
                 lastFailure = failure
                 onStage("retrying")
