@@ -138,7 +138,6 @@ Java_com_amresalehin_emregallery_ai_local_MiniCpmV46Native_loadModel(
     context_params.offload_kqv = false;
     g_context = llama_init_from_model(g_model, context_params);
     if (!g_context) {
-        env->ReleaseStringUTFChars(j_projector_path, projector_path);
         release_model_locked();
         set_error("llama.cpp could not create the MiniCPM-V 4.6 inference context.");
         return JNI_FALSE;
