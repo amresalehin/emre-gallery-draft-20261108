@@ -114,6 +114,9 @@ object LocalModelManager {
     ): Boolean {
         return LocalModelStateStore.downloadAndInstall(context, modelId, onProgress)
     }
+    suspend fun validateExistingInstallation(context: Context, modelId: String): Boolean {
+        return LocalModelStateStore.validateExistingInstallation(context, modelId)
+    }
 
     suspend fun downloadAndInstall(
         context: Context,
