@@ -155,6 +155,56 @@ object LocalModelStateStore {
         }
     }
 
+    /**
+     * Runs the real runtime smoke test against a legacy assets-only installation.
+     * This upgrades the manifest in place and avoids downloading large model files again.
+     */
+    suspend fun validateExistingInstallation(context: Context, modelId: String): Boolean = withContext(Dispatchers.IO) {
+        val spec = LocalModelRegistry.getSpec(modelId)
+        val lock = getLock(spec.id)
+        if (!lock.tryLock()) return@withContext false
+
+        try {
+            val current = LocalModelInstaller.checkInstallationStatus(context, spec)
+            if (current.status == LocalModelStatus.READY && current.runtimeReady) {
+                updateState(spec.id, current)
+                return@withContext true
+            }
+            if (current.status != LocalModelStatus.ASSETS_DOWNLOADED_RUNTIME_UNAVAILABLE) {
+                updateState(spec.id, current)
+                return@withContext false
+            }
+
+            updateState(
+                spec.id,
+                current.copy(
+                    status = LocalModelStatus.LOADING,
+                    progress = 1f,
+                    currentStage = "validating_runtime",
+                    lastUpdated = System.currentTimeMillis()
+                )
+            )
+
+            val validated = LocalModelInstaller.validatePreviouslyDownloadedAssets(context, spec)
+            updateState(spec.id, validated)
+            validated.status == LocalModelStatus.READY && validated.runtimeReady
+        } catch (cancelled: CancellationException) {
+            refreshAll(context)
+            throw cancelled
+        } catch (error: Throwable) {
+            updateState(
+                spec.id,
+                LocalModelState(
+                    status = LocalModelStatus.ERROR,
+                    errorMessage = error.localizedMessage ?: "Runtime validation failed.",
+                    lastUpdated = System.currentTimeMillis()
+                )
+            )
+            false
+        } finally {
+            lock.unlock()
+        }
+    }
     suspend fun uninstall(context: Context, modelId: String): Boolean = withContext(Dispatchers.IO) {
         val spec = LocalModelRegistry.getSpec(modelId)
         // A cancelled coroutine must finish closing its file streams before any deletion.
