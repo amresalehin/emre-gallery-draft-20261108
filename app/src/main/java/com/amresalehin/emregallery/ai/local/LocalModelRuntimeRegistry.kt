@@ -18,9 +18,9 @@ object LocalModelRuntimeRegistry {
         })
         register(object : LocalModelRuntimeFactory {
             override fun isApplicable(spec: LocalModelSpec): Boolean =
-                spec.architecture == ModelArchitecture.FLORENCE2
+                spec.architecture == ModelArchitecture.MINICPM_V46
             override fun createRuntime(spec: LocalModelSpec): LocalModelRuntime =
-                Florence2RuntimeAdapter(spec)
+                MiniCpmV46RuntimeAdapter(spec)
         })
     }
 
