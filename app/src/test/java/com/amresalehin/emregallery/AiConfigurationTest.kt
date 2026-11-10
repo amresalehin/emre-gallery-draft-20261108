@@ -293,7 +293,7 @@ class AiConfigurationTest {
     fun testLegacyAliasResolution() {
         assertEquals("minicpm_v_4_6", LocalModelManager.getSpec("minicpm_v_4_6").id)
         assertEquals("minicpm_v_4_6", LocalModelManager.getSpec("minicpm-v-4.6").id)
-        assertNull(LocalModelRegistry.findSpec("minicpm_v_4_6"))
+        assertNull(LocalModelRegistry.findSpec("florence2"))
         assertEquals("gemma_4_e2b", LocalModelManager.getSpec("gemma_4_e2b").id)
         assertEquals("gemma_4_e2b", LocalModelManager.getSpec("gemma4").id)
         assertEquals("lfm2_5_vl_450m_extract", LocalModelManager.getSpec("lfm2_5_vl_450m_extract").id)
@@ -477,7 +477,7 @@ class AiConfigurationTest {
             createDummyFileOfSize(f, art.exactBytes ?: art.expectedMinBytes)
         }
         // Truncate config.json to 0 bytes
-        File(modelDir, "config.json").writeText("")
+        File(modelDir, spec.artifacts.first().relativePath).writeText("")
         state = LocalModelInstaller.checkInstallationStatus(testFilesDir, spec)
         assertEquals(LocalModelStatus.ERROR, state.status)
         assertTrue(state.errorMessage?.contains("truncated") == true)
