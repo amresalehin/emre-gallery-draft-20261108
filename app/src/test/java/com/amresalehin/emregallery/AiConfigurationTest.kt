@@ -275,8 +275,10 @@ class AiConfigurationTest {
         assertNotNull("LFM2.5 must declare vision projector", mmproj)
         assertEquals("LFM2.5-VL-450M-Extract-Q4_K_M.gguf", model?.relativePath)
         assertEquals("mmproj-LFM2.5-VL-450M-Extract-Q8_0.gguf", mmproj?.relativePath)
-        assertEquals(240_668_768L, model?.exactBytes)
-        assertEquals(108_136_832L, mmproj?.exactBytes)
+        assertEquals(229_313_536L, model?.exactBytes)
+        assertEquals("12d083dbd0fcff8ed250d4e69c543dcda048363dac0bcb2d6f64b62be690bd70", model?.sha256Hex)
+        assertEquals(102_815_008L, mmproj?.exactBytes)
+        assertEquals("5c2610db45990058ce6eacacd5125c28a98d73561b99ea39ff8c22c1fdd5bd45", mmproj?.sha256Hex)
     }
     @Test
     fun testLfm25RuntimeRegistrationAndStructuredOutputMapping() {
@@ -453,6 +455,39 @@ class AiConfigurationTest {
         )
 
         assertEquals("FULL_REPLACEMENT_PAYLOAD", targetFile.readText())
+    }
+
+    @Test
+    fun testDownloader416ClearsInvalidResumeOffsetAndRestartsFromZero() = runBlocking {
+        val targetFile = tempFolder.newFile("range_416_restart.bin")
+        targetFile.writeText("STALE_PARTIAL_CONTENT_THAT_IS_LONGER_THAN_THE_REMOTE_FILE")
+        val staleOffset = targetFile.length()
+        val finalBody = "FRESH_PAYLOAD"
+
+        mockWebServer.enqueue(
+            MockResponse()
+                .setResponseCode(416)
+                .setHeader("Content-Range", "bytes */${finalBody.toByteArray().size}")
+        )
+        mockWebServer.enqueue(
+            MockResponse()
+                .setResponseCode(200)
+                .setBody(finalBody)
+        )
+
+        LocalModelDownloadManager.downloadArtifactFile(
+            url = mockWebServer.url("/range-416-restart").toString(),
+            destination = targetFile,
+            expectedBytes = finalBody.toByteArray().size.toLong(),
+            onProgress = {}
+        )
+
+        assertEquals(finalBody, targetFile.readText())
+        assertEquals(2, mockWebServer.requestCount)
+        val firstRequest = mockWebServer.takeRequest()
+        assertEquals("bytes=$staleOffset-", firstRequest.getHeader("Range"))
+        val restartRequest = mockWebServer.takeRequest()
+        assertNull("After HTTP 416 the retry must start without a Range header", restartRequest.getHeader("Range"))
     }
 
     @Test
