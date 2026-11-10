@@ -3,6 +3,7 @@ package com.amresalehin.emregallery
 import com.amresalehin.emregallery.ai.local.ArtifactRole
 import com.amresalehin.emregallery.ai.local.MiniCpmV46RuntimeAdapter
 import com.amresalehin.emregallery.ai.local.Lfm25VlRuntimeAdapter
+import com.amresalehin.emregallery.ai.local.Qwen35RuntimeAdapter
 import com.amresalehin.emregallery.ai.local.LocalModelRuntimeRegistry
 import com.amresalehin.emregallery.ai.local.LocalModelArtifact
 import com.amresalehin.emregallery.ai.local.LocalModelDownloadManager
@@ -295,7 +296,7 @@ class AiConfigurationTest {
         assertEquals("unsloth/Qwen3.5-0.8B-GGUF", qwen.upstreamRepo)
         assertEquals(ModelTaskType.VISION_LANGUAGE, qwen.taskType)
         assertEquals(ModelArchitecture.QWEN3_5, qwen.architecture)
-        assertFalse("Qwen 3.5 runtime adapter not active yet", qwen.hasRuntimeAdapter)
+        assertTrue("Qwen3.5 must have a real multimodal runtime adapter", qwen.hasRuntimeAdapter)
 
         assertEquals(2, qwen.artifacts.size)
         val model = qwen.artifacts.firstOrNull { it.role == ArtifactRole.GGUF_MODEL }
@@ -306,6 +307,22 @@ class AiConfigurationTest {
         assertEquals("mmproj-F16.gguf", mmproj?.relativePath)
         assertEquals(586_303_872L, model?.exactBytes)
         assertEquals(215_286_400L, mmproj?.exactBytes)
+    }
+    @Test
+    fun testQwen35RuntimeRegistrationAndStructuredOutputMapping() {
+        val spec = LocalModelRegistry.QWEN3_5_SPEC
+        assertTrue(spec.hasRuntimeAdapter)
+        assertTrue(
+            "Qwen3.5 must resolve to its own Qwen35 + Qwen3VL MTMD runtime",
+            LocalModelRuntimeRegistry.getRuntime(spec) is Qwen35RuntimeAdapter
+        )
+
+        val tags = Qwen35RuntimeAdapter.parseStructuredResponse(
+            """{"caption":"A red bicycle parked beside a tree.","tags":["red bicycle","tree","outdoor","street","parked bicycle","green foliage"]}"""
+        )
+        assertTrue(tags.contains("red bicycle"))
+        assertTrue(tags.contains("green foliage"))
+        assertFalse(tags.contains("A red bicycle parked beside a tree."))
     }
 
     @Test
