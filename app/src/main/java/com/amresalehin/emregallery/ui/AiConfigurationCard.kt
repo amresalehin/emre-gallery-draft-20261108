@@ -700,7 +700,7 @@ fun AiConfigurationCard(
                         LocalModelStatus.READY, LocalModelStatus.INSTALLED ->
                             if (model.hasRuntimeAdapter) "Ready — Validated & usable" else "Assets downloaded — runtime unavailable"
                         LocalModelStatus.ASSETS_DOWNLOADED_RUNTIME_UNAVAILABLE ->
-                            "Assets downloaded — runtime unavailable"
+                            if (model.hasRuntimeAdapter) "Downloaded — runtime validation required" else "Assets downloaded — runtime unavailable"
                         LocalModelStatus.DOWNLOADING, LocalModelStatus.VERIFYING, LocalModelStatus.LOADING ->
                             "In progress: ${state.currentStage ?: "Downloading"} (${(state.progress * 100).toInt()}%)"
                         LocalModelStatus.ERROR ->
@@ -736,7 +736,11 @@ fun AiConfigurationCard(
                             modifier = Modifier.fillMaxWidth()
                         ) {
                             Text(
-                                text = "Notice: All declared model artifacts and external weights were successfully downloaded and verified, but an on-device inference adapter has not yet been implemented for this architecture family.",
+                                text = if (model.hasRuntimeAdapter) {
+                                    "This model was downloaded before its on-device runtime was added. Validate the existing files to run a smoke test and make it ready without downloading the model again."
+                                } else {
+                                    "All declared model artifacts and external weights were downloaded and verified, but this architecture does not yet have an on-device inference adapter."
+                                },
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onTertiaryContainer,
                                 modifier = Modifier.padding(8.dp)
@@ -813,8 +817,25 @@ fun AiConfigurationCard(
                 }
             },
             confirmButton = {
-                Button(onClick = { selectedModelForDetails = null }) {
-                    Text("Done")
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    if (state.status == LocalModelStatus.ASSETS_DOWNLOADED_RUNTIME_UNAVAILABLE && model.hasRuntimeAdapter) {
+                        TextButton(
+                            onClick = {
+                                scope.launch {
+                                    val ready = LocalModelManager.validateExistingInstallation(context, model.id)
+                                    onShowSnackbar?.invoke(
+                                        if (ready) "${model.displayName} validated and ready to use"
+                                        else "${model.displayName} could not pass runtime validation; see its error details"
+                                    )
+                                }
+                            }
+                        ) {
+                            Text("Validate existing")
+                        }
+                    }
+                    Button(onClick = { selectedModelForDetails = null }) {
+                        Text("Done")
+                    }
                 }
             },
             dismissButton = {
