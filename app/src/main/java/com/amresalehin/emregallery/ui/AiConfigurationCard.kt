@@ -35,9 +35,9 @@ import androidx.compose.foundation.rememberScrollState
 import com.amresalehin.emregallery.ai.tagging.AiTaggingSettings
 import com.amresalehin.emregallery.data.CloudAiProvider
 import com.amresalehin.emregallery.data.CloudProviderStatus
-import com.amresalehin.emregallery.data.FlorenceModelManager
-import com.amresalehin.emregallery.data.FlorenceModelState
-import com.amresalehin.emregallery.data.FlorenceStatus
+import com.amresalehin.emregallery.data.LocalModelManager
+import com.amresalehin.emregallery.data.LocalModelState
+import com.amresalehin.emregallery.data.LocalModelStatus
 import com.amresalehin.emregallery.data.PreferencesRepository
 import kotlinx.coroutines.launch
 
@@ -66,8 +66,8 @@ fun AiConfigurationCard(
 
     val cloudProviders by prefs.cloudProviders.collectAsState(initial = emptyList())
     val activeProvider by prefs.activeCloudProvider.collectAsState(initial = null)
-    val florenceState by prefs.florenceModelState.collectAsState(initial = FlorenceModelState())
-    val allModelStates by FlorenceModelManager.allModelStates.collectAsState()
+    val localModelState by prefs.florenceModelState.collectAsState(initial = LocalModelState())
+    val allModelStates by LocalModelManager.allModelStates.collectAsState()
 
     var isExpanded by remember { mutableStateOf(initiallyExpanded) }
     LaunchedEffect(initiallyExpanded) {
@@ -85,11 +85,11 @@ fun AiConfigurationCard(
 
     var isTestingCloud by remember { mutableStateOf(false) }
     var cloudTestFeedback by remember { mutableStateOf<String?>(null) }
-    var selectedModelForDetails by remember { mutableStateOf<FlorenceModelManager.LocalModelSpec?>(null) }
+    var selectedModelForDetails by remember { mutableStateOf<LocalModelManager.LocalModelSpec?>(null) }
 
     // Synchronize initial Local models state on mount
     LaunchedEffect(Unit) {
-        FlorenceModelManager.refreshAllStates(context)
+        LocalModelManager.refreshAllStates(context)
     }
 
     val isDark = MaterialTheme.colorScheme.background.luminance() < 0.5f
@@ -544,8 +544,8 @@ fun AiConfigurationCard(
                             verticalArrangement = Arrangement.spacedBy(8.dp),
                             modifier = Modifier.fillMaxWidth()
                         ) {
-                            FlorenceModelManager.SUPPORTED_MODELS.forEach { model ->
-                                val modelState = allModelStates[model.id] ?: FlorenceModelState()
+                            LocalModelManager.SUPPORTED_MODELS.forEach { model ->
+                                val modelState = allModelStates[model.id] ?: LocalModelState()
 
                                 Surface(
                                     shape = RoundedCornerShape(20.dp),
@@ -577,17 +577,17 @@ fun AiConfigurationCard(
                                                 modifier = Modifier.weight(1f)
                                             )
 
-                                            DynamicFlorenceStatusButton(
+                                            DynamicLocalModelStatusButton(
                                                 state = modelState,
                                                 testTagPrefix = model.testTagPrefix,
                                                 isDark = isDark,
                                                 onInstall = {
                                                     scope.launch {
-                                                        FlorenceModelManager.downloadAndInstallModel(context, model.id)
+                                                        LocalModelManager.downloadAndInstallModel(context, model.id)
                                                     }
                                                 },
                                                 onCancel = {
-                                                    FlorenceModelManager.cancelDownload(context, model.id)
+                                                    LocalModelManager.cancelDownload(context, model.id)
                                                 },
                                                 onDetails = {
                                                     selectedModelForDetails = model
@@ -596,10 +596,10 @@ fun AiConfigurationCard(
                                         }
 
                                         // Progress bar when queued, downloading, verifying, or validating runtime
-                                        val isBusy = modelState.status == FlorenceStatus.DOWNLOADING ||
-                                                modelState.status == FlorenceStatus.VERIFYING ||
-                                                modelState.status == FlorenceStatus.LOADING ||
-                                                modelState.status == FlorenceStatus.QUEUED
+                                        val isBusy = modelState.status == LocalModelStatus.DOWNLOADING ||
+                                                modelState.status == LocalModelStatus.VERIFYING ||
+                                                modelState.status == LocalModelStatus.LOADING ||
+                                                modelState.status == LocalModelStatus.QUEUED
 
                                         if (isBusy) {
                                             Spacer(Modifier.height(14.dp))
@@ -618,9 +618,9 @@ fun AiConfigurationCard(
                                                     horizontalArrangement = Arrangement.SpaceBetween
                                                 ) {
                                                     val statusLabel = when (modelState.status) {
-                                                        FlorenceStatus.QUEUED -> "Queued..."
-                                                        FlorenceStatus.VERIFYING -> "Verifying integrity..."
-                                                        FlorenceStatus.LOADING -> "Validating ONNX runtime..."
+                                                        LocalModelStatus.QUEUED -> "Queued..."
+                                                        LocalModelStatus.VERIFYING -> "Verifying integrity..."
+                                                        LocalModelStatus.LOADING -> "Validating model runtime..."
                                                         else -> {
                                                             val downloaded = formatBytes(modelState.bytesDownloaded)
                                                             val total = formatBytes(modelState.totalBytes)
@@ -639,7 +639,7 @@ fun AiConfigurationCard(
                                                         fontSize = 10.5.sp,
                                                         color = MaterialTheme.colorScheme.onSurfaceVariant
                                                     )
-                                                    val percentOrEta = if (modelState.etaSeconds > 0 && modelState.status == FlorenceStatus.DOWNLOADING) {
+                                                    val percentOrEta = if (modelState.etaSeconds > 0 && modelState.status == LocalModelStatus.DOWNLOADING) {
                                                         "${(modelState.progress * 100).toInt()}% • ETA ${modelState.etaSeconds}s"
                                                     } else {
                                                         "${(modelState.progress * 100).toInt()}%"
@@ -656,7 +656,7 @@ fun AiConfigurationCard(
                                         }
 
                                         // Error text preview if in error state
-                                        if (modelState.status == FlorenceStatus.ERROR && !modelState.errorMessage.isNullOrBlank()) {
+                                        if (modelState.status == LocalModelStatus.ERROR && !modelState.errorMessage.isNullOrBlank()) {
                                             Spacer(Modifier.height(8.dp))
                                             Text(
                                                 text = modelState.errorMessage,
@@ -683,7 +683,7 @@ fun AiConfigurationCard(
 
     // Local Model Details / Options Dialog
     selectedModelForDetails?.let { model ->
-        val state = allModelStates[model.id] ?: FlorenceModelState()
+        val state = allModelStates[model.id] ?: LocalModelState()
         AlertDialog(
             onDismissRequest = { selectedModelForDetails = null },
             title = {
@@ -697,21 +697,21 @@ fun AiConfigurationCard(
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     // Status Badge
                     val statusText = when (state.status) {
-                        FlorenceStatus.READY, FlorenceStatus.INSTALLED ->
+                        LocalModelStatus.READY, LocalModelStatus.INSTALLED ->
                             if (model.hasRuntimeAdapter) "Ready — Validated & usable" else "Assets downloaded — runtime unavailable"
-                        FlorenceStatus.ASSETS_DOWNLOADED_RUNTIME_UNAVAILABLE ->
+                        LocalModelStatus.ASSETS_DOWNLOADED_RUNTIME_UNAVAILABLE ->
                             "Assets downloaded — runtime unavailable"
-                        FlorenceStatus.DOWNLOADING, FlorenceStatus.VERIFYING, FlorenceStatus.LOADING ->
+                        LocalModelStatus.DOWNLOADING, LocalModelStatus.VERIFYING, LocalModelStatus.LOADING ->
                             "In progress: ${state.currentStage ?: "Downloading"} (${(state.progress * 100).toInt()}%)"
-                        FlorenceStatus.ERROR ->
+                        LocalModelStatus.ERROR ->
                             "Error: ${state.errorMessage ?: "Installation failed"}"
-                        FlorenceStatus.QUEUED ->
+                        LocalModelStatus.QUEUED ->
                             "Queued for download"
-                        FlorenceStatus.PAUSED ->
+                        LocalModelStatus.PAUSED ->
                             "Paused"
-                        FlorenceStatus.UNINSTALLING ->
+                        LocalModelStatus.UNINSTALLING ->
                             "Uninstalling..."
-                        FlorenceStatus.NOT_INSTALLED ->
+                        LocalModelStatus.NOT_INSTALLED ->
                             "Not installed"
                     }
 
@@ -720,15 +720,15 @@ fun AiConfigurationCard(
                         style = MaterialTheme.typography.bodyMedium,
                         fontWeight = FontWeight.SemiBold,
                         color = when (state.status) {
-                            FlorenceStatus.READY, FlorenceStatus.INSTALLED -> if (model.hasRuntimeAdapter) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.tertiary
-                            FlorenceStatus.ASSETS_DOWNLOADED_RUNTIME_UNAVAILABLE -> MaterialTheme.colorScheme.tertiary
-                            FlorenceStatus.ERROR -> MaterialTheme.colorScheme.error
+                            LocalModelStatus.READY, LocalModelStatus.INSTALLED -> if (model.hasRuntimeAdapter) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.tertiary
+                            LocalModelStatus.ASSETS_DOWNLOADED_RUNTIME_UNAVAILABLE -> MaterialTheme.colorScheme.tertiary
+                            LocalModelStatus.ERROR -> MaterialTheme.colorScheme.error
                             else -> MaterialTheme.colorScheme.onSurface
                         }
                     )
 
-                    if (state.status == FlorenceStatus.ASSETS_DOWNLOADED_RUNTIME_UNAVAILABLE ||
-                        ((state.status == FlorenceStatus.READY || state.status == FlorenceStatus.INSTALLED) && !model.hasRuntimeAdapter)
+                    if (state.status == LocalModelStatus.ASSETS_DOWNLOADED_RUNTIME_UNAVAILABLE ||
+                        ((state.status == LocalModelStatus.READY || state.status == LocalModelStatus.INSTALLED) && !model.hasRuntimeAdapter)
                     ) {
                         Surface(
                             shape = RoundedCornerShape(10.dp),
@@ -744,7 +744,7 @@ fun AiConfigurationCard(
                         }
                     }
 
-                    if (state.status == FlorenceStatus.ERROR && !state.errorMessage.isNullOrBlank()) {
+                    if (state.status == LocalModelStatus.ERROR && !state.errorMessage.isNullOrBlank()) {
                         Surface(
                             shape = RoundedCornerShape(10.dp),
                             color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.4f),
@@ -818,16 +818,16 @@ fun AiConfigurationCard(
                 }
             },
             dismissButton = {
-                val isInstalledOrAssets = state.status == FlorenceStatus.READY ||
-                        state.status == FlorenceStatus.INSTALLED ||
-                        state.status == FlorenceStatus.ASSETS_DOWNLOADED_RUNTIME_UNAVAILABLE ||
+                val isInstalledOrAssets = state.status == LocalModelStatus.READY ||
+                        state.status == LocalModelStatus.INSTALLED ||
+                        state.status == LocalModelStatus.ASSETS_DOWNLOADED_RUNTIME_UNAVAILABLE ||
                         state.installedSizeBytes > 0
 
                 if (isInstalledOrAssets) {
                     TextButton(
                         onClick = {
                             scope.launch {
-                                FlorenceModelManager.uninstallModel(context, model.id)
+                                LocalModelManager.uninstallModel(context, model.id)
                                 selectedModelForDetails = null
                                 onShowSnackbar?.invoke("${model.displayName} uninstalled")
                             }
@@ -836,12 +836,12 @@ fun AiConfigurationCard(
                     ) {
                         Text("Uninstall")
                     }
-                } else if (state.status == FlorenceStatus.ERROR) {
+                } else if (state.status == LocalModelStatus.ERROR) {
                     TextButton(
                         onClick = {
                             selectedModelForDetails = null
                             scope.launch {
-                                FlorenceModelManager.downloadAndInstallModel(context, model.id)
+                                LocalModelManager.downloadAndInstallModel(context, model.id)
                             }
                         }
                     ) {
@@ -1153,20 +1153,20 @@ private fun DynamicCloudStatusIndicator(
 }
 
 /**
- * Dynamic Status Button for Florence-2 Local Model matching Welcome Screen capsule buttons
+ * Dynamic Status Button for local model Local Model matching Welcome Screen capsule buttons
  * and app monochrome theme tokens.
  */
 @Composable
-private fun DynamicFlorenceStatusButton(
-    state: FlorenceModelState,
+private fun DynamicLocalModelStatusButton(
+    state: LocalModelState,
     isDark: Boolean,
-    testTagPrefix: String = "florence",
+    testTagPrefix: String = "local_model",
     onInstall: () -> Unit,
     onCancel: () -> Unit,
     onDetails: () -> Unit
 ) {
     when (state.status) {
-        FlorenceStatus.NOT_INSTALLED -> {
+        LocalModelStatus.NOT_INSTALLED -> {
             Surface(
                 onClick = onInstall,
                 shape = CircleShape,
@@ -1202,7 +1202,7 @@ private fun DynamicFlorenceStatusButton(
             }
         }
 
-        FlorenceStatus.DOWNLOADING, FlorenceStatus.VERIFYING, FlorenceStatus.LOADING, FlorenceStatus.QUEUED, FlorenceStatus.PAUSED, FlorenceStatus.UNINSTALLING -> {
+        LocalModelStatus.DOWNLOADING, LocalModelStatus.VERIFYING, LocalModelStatus.LOADING, LocalModelStatus.QUEUED, LocalModelStatus.PAUSED, LocalModelStatus.UNINSTALLING -> {
             Surface(
                 shape = CircleShape,
                 color = if (isDark) MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f) else Color(0x0F000000),
@@ -1226,10 +1226,10 @@ private fun DynamicFlorenceStatusButton(
                         color = if (isDark) MaterialTheme.colorScheme.primary else Color(0xFF161A20)
                     )
                     val label = when (state.status) {
-                        FlorenceStatus.QUEUED -> "Queued"
-                        FlorenceStatus.VERIFYING -> "Verifying"
-                        FlorenceStatus.LOADING -> "Checking"
-                        FlorenceStatus.UNINSTALLING -> "Removing"
+                        LocalModelStatus.QUEUED -> "Queued"
+                        LocalModelStatus.VERIFYING -> "Verifying"
+                        LocalModelStatus.LOADING -> "Checking"
+                        LocalModelStatus.UNINSTALLING -> "Removing"
                         else -> "${(state.progress * 100).toInt()}%"
                     }
                     Text(
@@ -1255,7 +1255,7 @@ private fun DynamicFlorenceStatusButton(
             }
         }
 
-        FlorenceStatus.READY, FlorenceStatus.INSTALLED -> {
+        LocalModelStatus.READY, LocalModelStatus.INSTALLED -> {
             val bg = if (isDark) MaterialTheme.colorScheme.primary else Color(0xFF161A20)
             val border = if (isDark) MaterialTheme.colorScheme.primary else Color(0xFF161A20)
             val contentColor = if (isDark) MaterialTheme.colorScheme.onPrimary else Color.White
@@ -1292,7 +1292,7 @@ private fun DynamicFlorenceStatusButton(
             }
         }
 
-        FlorenceStatus.ASSETS_DOWNLOADED_RUNTIME_UNAVAILABLE -> {
+        LocalModelStatus.ASSETS_DOWNLOADED_RUNTIME_UNAVAILABLE -> {
             val bg = if (isDark) MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f) else Color(0x14000000)
             val border = if (isDark) MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f) else Color(0x26000000)
             val contentColor = MaterialTheme.colorScheme.onSurface
@@ -1329,7 +1329,7 @@ private fun DynamicFlorenceStatusButton(
             }
         }
 
-        FlorenceStatus.ERROR -> {
+        LocalModelStatus.ERROR -> {
             val bg = if (isDark) MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.35f) else MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.25f)
             val border = MaterialTheme.colorScheme.error.copy(alpha = 0.45f)
             val contentColor = if (isDark) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onErrorContainer
