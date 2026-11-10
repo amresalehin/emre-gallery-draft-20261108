@@ -48,3 +48,9 @@ interface LocalModelRuntimeFactory {
     fun isApplicable(spec: LocalModelSpec): Boolean
     fun createRuntime(spec: LocalModelSpec): LocalModelRuntime
 }
+
+
+/** Runtime capability for adapters that accept image pixels and generate text. */
+interface LocalImageTaggingRuntime {
+    suspend fun generateImageTags(imageBytes: ByteArray): String
+}
