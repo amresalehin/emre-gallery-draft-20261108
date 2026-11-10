@@ -51,7 +51,7 @@ enum class LocalModelStatus {
 }
 
 data class LocalModelState(
-    val status: FlorenceStatus = FlorenceStatus.NOT_INSTALLED,
+    val status: LocalModelStatus = LocalModelStatus.NOT_INSTALLED,
     val progress: Float = 0f,
     val bytesDownloaded: Long = 0L,
     val totalBytes: Long = 0L,
