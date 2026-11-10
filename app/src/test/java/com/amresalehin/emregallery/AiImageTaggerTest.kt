@@ -152,6 +152,70 @@ class AiImageTaggerTest {
     }
 
     @Test
+    fun testCloudVisionAcceptsOpenAiContentArrayResponse() = runBlocking {
+        mockWebServer.enqueue(
+            MockResponse()
+                .setResponseCode(200)
+                .setHeader("Content-Type", "application/json")
+                .setBody("""{"choices":[{"message":{"content":[{"type":"text","text":"forest, pine trees, mountain"}]}}]}""")
+        )
+        val provider = CloudAiProvider(
+            id = "array_provider",
+            name = "OpenAI-compatible",
+            baseUrl = mockWebServer.url("/v1").toString(),
+            apiKey = "secret",
+            modelId = "gpt-6.1-sol",
+            status = CloudProviderStatus.CONNECTED
+        )
+
+        val tags = AiImageTagger.tagWithCloudVisionDirect(provider, byteArrayOf(1, 2, 3))
+        assertTrue(tags.contains("forest"))
+        assertTrue(tags.contains("pine trees"))
+        assertTrue(tags.contains("mountain"))
+    }
+
+    @Test
+    fun testCloudVisionRejectsEmptyImagePayload() = runBlocking {
+        val provider = CloudAiProvider(
+            id = "empty_image_provider",
+            name = "OpenAI",
+            baseUrl = mockWebServer.url("/v1").toString(),
+            apiKey = "secret",
+            modelId = "gpt-6.1-sol"
+        )
+        try {
+            AiImageTagger.tagWithCloudVisionDirect(provider, byteArrayOf())
+            fail("Expected an empty image payload to be rejected")
+        } catch (error: java.io.IOException) {
+            assertTrue(error.message.orEmpty().contains("image payload is empty"))
+        }
+    }
+
+    @Test
+    fun testCloudVisionReturnsProviderHttpError() = runBlocking {
+        mockWebServer.enqueue(
+            MockResponse()
+                .setResponseCode(401)
+                .setHeader("Content-Type", "application/json")
+                .setBody("""{"error":{"message":"Invalid API key"}}""")
+        )
+        val provider = CloudAiProvider(
+            id = "unauthorized_provider",
+            name = "OpenAI-compatible",
+            baseUrl = mockWebServer.url("/v1").toString(),
+            apiKey = "wrong",
+            modelId = "gpt-6.1-sol"
+        )
+        try {
+            AiImageTagger.tagWithCloudVisionDirect(provider, byteArrayOf(1, 2, 3))
+            fail("Expected authentication failure")
+        } catch (error: java.io.IOException) {
+            assertTrue(error.message.orEmpty().contains("HTTP 401"))
+            assertTrue(error.message.orEmpty().contains("Invalid API key"))
+        }
+    }
+
+    @Test
     fun testAllFourLocalImageTaggingRuntimesAreAvailable() {
         assertTrue(LocalModelRegistry.MINI_CPM_V46_SPEC.hasRuntimeAdapter)
         assertTrue(LocalModelRegistry.GEMMA_4_SPEC.hasRuntimeAdapter)
