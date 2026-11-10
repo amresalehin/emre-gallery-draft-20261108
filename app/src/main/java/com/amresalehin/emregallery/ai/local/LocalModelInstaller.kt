@@ -178,7 +178,8 @@ object LocalModelInstaller {
                     .firstOrNull { it.optString("path") == artifact.relativePath }
             }
             val manifestFingerprintMatches =
-                installedRecord?.optLong("bytes", -1L) == len &&
+                installedRecord != null &&
+                installedRecord.optLong("bytes", -1L) == len &&
                 installedRecord.optLong("lastModified", -1L) == file.lastModified() &&
                 (artifact.sha256Hex.isNullOrBlank() ||
                     installedRecord.optString("sha256").equals(artifact.sha256Hex, ignoreCase = true)) &&
