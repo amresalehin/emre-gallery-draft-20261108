@@ -93,7 +93,10 @@ endif()
 find_library(log-lib log)
 find_library(android-lib android)
 
-add_library(emre_minicpm SHARED minicpm_v46_jni.cpp)
+add_library(emre_minicpm SHARED
+    minicpm_v46_jni.cpp
+    lfm2_5_vl_jni.cpp
+)
 target_include_directories(emre_minicpm PRIVATE
     "${llama_cpp_SOURCE_DIR}/include"
     "${llama_cpp_SOURCE_DIR}/ggml/include"
