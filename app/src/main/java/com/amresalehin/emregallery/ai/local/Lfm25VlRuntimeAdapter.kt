@@ -49,7 +49,7 @@ class Lfm25VlRuntimeAdapter(
          * system message and a JSON object response. Keep requested values short
          * so they can be converted into useful searchable gallery tags.
          */
-        private const val SYSTEM_PROMPT = """
+        private val SYSTEM_PROMPT = """
 Extract the following visually supported information from the image.
 
 subjects: Identify the main visible people, animals, objects, products, or landmarks. Return short noun phrases.
