@@ -46,6 +46,20 @@ class Qwen35RuntimeAdapter(
             }
         }
 
+        /** Device-class check separated from transient free-memory pressure for UI availability. */
+        fun deviceClassRequirementMessage(context: Context): String? {
+            val manager = context.getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager
+                ?: return "Unable to verify device memory for Qwen3.5-0.8B."
+            val info = ActivityManager.MemoryInfo()
+            manager.getMemoryInfo(info)
+            return deviceClassRequirementMessage(info.totalMem)
+        }
+
+        internal fun deviceClassRequirementMessage(totalMemBytes: Long): String? =
+            if (totalMemBytes < MIN_DEVICE_RAM_BYTES) {
+                "Qwen3.5-0.8B UD-Q4_K_XL is intended for a device with at least 3.5 GB RAM. This device is below the minimum memory class."
+            } else null
+
         /**
          * Qwen3.5 Small is non-thinking by default. Ask explicitly for compact
          * JSON tags because the gallery's current local inference contract stores tags.
