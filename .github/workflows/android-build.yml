@@ -48,19 +48,48 @@ jobs:
           python --version
           python3.10 --version
 
-      - name: Install Android NDK and CMake
+      - name: Install Android NDK and CMake when missing
         run: |
           SDK_ROOT="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
           echo "Android SDK: $SDK_ROOT"
           echo "ANDROID_HOME=$SDK_ROOT" >> "$GITHUB_ENV"
           echo "ANDROID_SDK_ROOT=$SDK_ROOT" >> "$GITHUB_ENV"
-          "$SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" --install "ndk;27.0.12077973" "cmake;3.22.1"
+
+          if [[ ! -d "$SDK_ROOT/ndk/27.0.12077973" || ! -d "$SDK_ROOT/cmake/3.22.1" ]]; then
+            "$SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" --install "ndk;27.0.12077973" "cmake;3.22.1"
+          else
+            echo "Required NDK and CMake versions are already installed."
+          fi
+
+      # llama.cpp + mtmd are compiled from source for both configured Android ABIs.
+      # Preserve CMake/Ninja state and native object files across commits on this branch.
+      - name: Restore native CMake build cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            app/.cxx/
+            app/build/intermediates/cxx/
+          key: native-cxx-${{ runner.os }}-ndk27-cmake322-${{ hashFiles('app/src/main/cpp/**', 'app/build.gradle.kts') }}
+          restore-keys: |
+            native-cxx-${{ runner.os }}-ndk27-cmake322-
+
+      - name: Restore Python package download cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: python-pip-${{ runner.os }}-3.10-${{ hashFiles('app/build.gradle.kts') }}
+          restore-keys: |
+            python-pip-${{ runner.os }}-3.10-
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v6
+        with:
+          # Also persist Gradle's dependency and task-output cache on the long-lived
+          # feature branch instead of making every feature-branch run read-only.
+          cache-read-only: ${{ github.ref != 'refs/heads/main' && github.ref != 'refs/heads/fix/cloud-vision-production-20261110' }}
 
       - name: Run unit tests and assemble debug APK
-        run: bash ./gradlew --no-daemon --stacktrace testDebugUnitTest assembleDebug
+        run: bash ./gradlew --stacktrace --parallel --build-cache testDebugUnitTest assembleDebug
 
       - name: Upload debug APK
         uses: actions/upload-artifact@v4
