@@ -121,13 +121,15 @@ object LocalModelRegistry {
             LocalModelArtifact(
                 relativePath = "LFM2.5-VL-450M-Extract-Q4_K_M.gguf",
                 sourceUrl = lfmUrl("LFM2.5-VL-450M-Extract-Q4_K_M.gguf"),
-                exactBytes = 240_668_768L,
+                exactBytes = 229_313_536L,
+                sha256Hex = "12d083dbd0fcff8ed250d4e69c543dcda048363dac0bcb2d6f64b62be690bd70",
                 role = ArtifactRole.GGUF_MODEL
             ),
             LocalModelArtifact(
                 relativePath = "mmproj-LFM2.5-VL-450M-Extract-Q8_0.gguf",
                 sourceUrl = lfmUrl("mmproj-LFM2.5-VL-450M-Extract-Q8_0.gguf"),
-                exactBytes = 108_136_832L,
+                exactBytes = 102_815_008L,
+                sha256Hex = "5c2610db45990058ce6eacacd5125c28a98d73561b99ea39ff8c22c1fdd5bd45",
                 role = ArtifactRole.GGUF_MMPROJ
             )
         )
