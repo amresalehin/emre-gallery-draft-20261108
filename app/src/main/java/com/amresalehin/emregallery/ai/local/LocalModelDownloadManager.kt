@@ -92,9 +92,11 @@ object LocalModelDownloadManager {
                             return@withContext
                         }
                     }
-                    destination.delete()
+                    // Truncate instead of relying on delete(): some filesystems/providers can
+                    // refuse deletion while retaining the stale length, which would repeat 416.
+                    clearPartialFile(destination)
                     if (attempt == MAX_ATTEMPTS) throw IOException("HTTP 416: server rejected resume offset for " + url)
-                    lastFailure = IOException("HTTP 416: restarting from byte zero.")
+                    lastFailure = IOException("HTTP 416: invalid resume offset; restarting from byte zero.")
                     onStage("retrying")
                     delay(250L * attempt)
                     continue
@@ -219,6 +221,18 @@ object LocalModelDownloadManager {
                 connection.disconnect()
                 throw failure
             }
+        }
+    }
+
+    private fun clearPartialFile(file: File) {
+        if (!file.exists()) return
+        try {
+            FileOutputStream(file, false).use { it.flush() }
+        } catch (error: IOException) {
+            throw IOException("Unable to clear invalid partial download at " + file.absolutePath, error)
+        }
+        if (file.length() != 0L) {
+            throw IOException("Unable to reset invalid partial download at " + file.absolutePath)
         }
     }
 
