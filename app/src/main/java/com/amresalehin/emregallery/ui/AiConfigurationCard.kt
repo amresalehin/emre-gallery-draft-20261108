@@ -987,7 +987,6 @@ private fun AiSegmentOption(
                 )
             )
         }
-        }
     }
 }
 
