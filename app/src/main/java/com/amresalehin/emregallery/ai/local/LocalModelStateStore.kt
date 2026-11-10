@@ -161,6 +161,7 @@ object LocalModelStateStore {
         activeJobs[spec.id]?.cancelAndJoin()
         val lock = getLock(spec.id)
         lock.withLock {
+            LocalModelRuntimeRegistry.closeRuntime(spec.id)
             val uninstalled = LocalModelInstaller.uninstall(context, spec)
             val resetState = FlorenceModelState(
                 status = FlorenceStatus.NOT_INSTALLED,
