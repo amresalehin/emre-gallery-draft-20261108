@@ -86,6 +86,8 @@ dependencies {
     implementation("androidx.exifinterface:exifinterface:1.3.7")
     // On-device InsightFace buffalo_l SCRFD detector and ArcFace inference.
     implementation("com.microsoft.onnxruntime:onnxruntime-android:1.20.0")
+    // Google LiteRT-LM for genuine Gemma 4 multimodal inference.
+    implementation("com.google.ai.edge.litertlm:litertlm-android:0.16.1")
     // Native Tesseract engine and its JNI libraries are packaged in the APK.
     implementation("cz.adaptech.tesseract4android:tesseract4android:4.9.0")
     // On-device Google ML Kit Text Recognition with multiple language script support
