@@ -216,11 +216,18 @@ object MediaCaptureEngine {
             (function() {
                 if (window.__emreObserverInstalled) return;
                 window.__emreObserverInstalled = true;
+                var reportedUrls = new Set();
+                var pendingNodes = [];
+                var scheduleTimeout = null;
 
                 function report(u) {
                     if (!u || u.indexOf('data:') === 0 || u.indexOf('blob:') === 0) return;
+                    if (reportedUrls.has(u)) return;
+                    reportedUrls.add(u);
                     try {
                         var abs = new URL(u, document.baseURI || window.location.href).href;
+                        if (reportedUrls.has(abs)) return;
+                        reportedUrls.add(abs);
                         if (window.EmreBridge && window.EmreBridge.reportMedia) {
                             window.EmreBridge.reportMedia(abs);
                         }
@@ -288,16 +295,28 @@ object MediaCaptureEngine {
                     }
                 }
 
+                function processBatch() {
+                    scheduleTimeout = null;
+                    var batch = pendingNodes;
+                    pendingNodes = [];
+                    for (var i = 0; i < batch.length; i++) {
+                        checkNode(batch[i]);
+                    }
+                }
+
                 var observer = new MutationObserver(function(mutations) {
                     for (var m = 0; m < mutations.length; m++) {
                         var mut = mutations[m];
                         if (mut.type === 'childList') {
                             for (var i = 0; i < mut.addedNodes.length; i++) {
-                                checkNode(mut.addedNodes[i]);
+                                pendingNodes.push(mut.addedNodes[i]);
                             }
                         } else if (mut.type === 'attributes') {
-                            checkNode(mut.target);
+                            pendingNodes.push(mut.target);
                         }
+                    }
+                    if (!scheduleTimeout) {
+                        scheduleTimeout = setTimeout(processBatch, 250);
                     }
                 });
 
@@ -336,6 +355,16 @@ object MediaCaptureEngine {
         """.trimIndent()
     }
 
+    private val seenInterceptUrls = java.util.Collections.synchronizedSet(
+        java.util.Collections.newSetFromMap(
+            object : java.util.LinkedHashMap<String, Boolean>(256, 0.75f, true) {
+                override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Boolean>?): Boolean {
+                    return size > 500
+                }
+            }
+        )
+    )
+
     /**
      * Builds and validates a ScrapedMediaItem with provenance, clean titles,
      * download headers (User-Agent, Referer, Cookie), and thumbnail classification.
@@ -352,7 +381,8 @@ object MediaCaptureEngine {
         domSelector: String? = null,
         declaredWidth: Int? = null,
         declaredHeight: Int? = null,
-        customId: String? = null
+        customId: String? = null,
+        customCookie: String? = null
     ): ScrapedMediaItem? {
         val trimmed = rawUrl.trim()
         if (trimmed.startsWith("blob:", ignoreCase = true)) return null
@@ -390,7 +420,9 @@ object MediaCaptureEngine {
         val headers = mutableMapOf<String, String>()
         headers["Referer"] = baseUrl
         headers["User-Agent"] = OkHttpDownloader.DEFAULT_USER_AGENT
-        val cookieStr = OkHttpDownloader.sharedCookieJar.getCookieString(baseUrl)
+        val cookieStr = customCookie ?: if (source != ExtractionSource.NETWORK_INTERCEPT) {
+            OkHttpDownloader.sharedCookieJar.getCookieString(baseUrl)
+        } else ""
         if (cookieStr.isNotBlank()) {
             headers["Cookie"] = cookieStr
         }
@@ -506,17 +538,26 @@ object MediaCaptureEngine {
 
         if (isVideo || isAudio || isImage) {
             val cleanReqUrl = if (isVideo) MediaClassifier.cleanMediaUrl(reqUrl) else reqUrl
+            val alreadyCaptured = synchronized(seenInterceptUrls) {
+                !seenInterceptUrls.add(cleanReqUrl)
+            }
+            if (alreadyCaptured) {
+                return null
+            }
+
             val ytPoster = if (isVideo) {
                 MediaClassifier.extractYouTubeVideoId(baseUrl)?.let { ytId ->
                     "https://i.ytimg.com/vi/$ytId/maxresdefault.jpg"
                 }
             } else null
+            val cookieHeader = headers["Cookie"] ?: headers["cookie"]
             val item = buildMediaItem(
                 rawUrl = cleanReqUrl,
                 source = ExtractionSource.NETWORK_INTERCEPT,
                 baseUrl = baseUrl,
                 poster = ytPoster,
-                mimeHint = if (cleanReqPath.contains("/videoplayback")) "video/mp4" else null
+                mimeHint = if (cleanReqPath.contains("/videoplayback")) "video/mp4" else null,
+                customCookie = cookieHeader
             )
             if (item != null) {
                 onMediaDiscovered(item)
