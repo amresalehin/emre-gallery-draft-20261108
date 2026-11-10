@@ -85,8 +85,12 @@ object LocalModelDownloadManager {
                         destination.length() == serverLength &&
                         (expectedBytes == null || serverLength == expectedBytes)
                     ) {
-                        onProgress(0L)
-                        return@withContext
+                        val shaOk = expectedSha256.isNullOrBlank() || sha256(destination).equals(expectedSha256, ignoreCase = true)
+                        val md5Ok = expectedMd5.isNullOrBlank() || md5(destination).equals(expectedMd5, ignoreCase = true)
+                        if (shaOk && md5Ok) {
+                            onProgress(0L)
+                            return@withContext
+                        }
                     }
                     destination.delete()
                     if (attempt == MAX_ATTEMPTS) throw IOException("HTTP 416: server rejected resume offset for " + url)
