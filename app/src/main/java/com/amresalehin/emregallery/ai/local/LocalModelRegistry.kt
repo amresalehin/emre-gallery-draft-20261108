@@ -11,103 +11,45 @@ object LocalModelRegistry {
     private const val HF_RESOLVE_BASE = "https://huggingface.co"
 
     // --------------------------------------------------------------------------
-    // 1. Florence-2 Base Vision-Language Model
+    // 1. OpenBMB MiniCPM-V 4.6 (1.3B) multimodal model (llama.cpp)
     // --------------------------------------------------------------------------
-    const val FLORENCE_2_BASE_ID = "florence2"
-    const val FLORENCE_2_CANONICAL_ID = "florence-2-base"
-    const val FLORENCE_2_REPO = "onnx-community/Florence-2-base"
-    const val FLORENCE_2_REVISION = "d59e079711c57174f29265539fb4cc9f0f335916"
+    const val MINI_CPM_V46_ID = "minicpm_v_4_6"
+    const val MINI_CPM_V46_CANONICAL_ID = "minicpm-v-4.6-instruct"
+    const val MINI_CPM_V46_REPO = "openbmb/MiniCPM-V-4.6-gguf"
+    const val MINI_CPM_V46_REVISION = "78e02f066e9819a60573b78a4275df8a0c27f698"
 
-    private fun florenceUrl(relativePath: String): String =
-        "$HF_RESOLVE_BASE/$FLORENCE_2_REPO/resolve/$FLORENCE_2_REVISION/$relativePath"
+    private fun miniCpmV46Url(fileName: String): String =
+        "$HF_RESOLVE_BASE/$MINI_CPM_V46_REPO/resolve/$MINI_CPM_V46_REVISION/$fileName"
 
-    val FLORENCE_2_SPEC = LocalModelSpec(
-        id = FLORENCE_2_BASE_ID,
-        canonicalId = FLORENCE_2_CANONICAL_ID,
-        legacyAliases = listOf("florence-2-base", "florence2_base"),
-        displayName = "Florence-2 Base",
-        upstreamRepo = FLORENCE_2_REPO,
-        upstreamRevision = FLORENCE_2_REVISION,
-        description = "Microsoft Florence-2 Base ONNX Vision-Language Model (Captioning, VQA, OCR & Extraction)",
+    val MINI_CPM_V46_SPEC = LocalModelSpec(
+        id = MINI_CPM_V46_ID,
+        canonicalId = MINI_CPM_V46_CANONICAL_ID,
+        legacyAliases = listOf("minicpm-v-4.6", "minicpm_v46"),
+        displayName = "MiniCPM-V 4.6 (1.3B)",
+        upstreamRepo = MINI_CPM_V46_REPO,
+        upstreamRevision = MINI_CPM_V46_REVISION,
+        description = "OpenBMB MiniCPM-V 4.6 1.3B vision-language model using Q4_K_M weights and its F16 vision projector (about 1.6 GB; 6 GB RAM-class device recommended).",
         taskType = ModelTaskType.VISION_LANGUAGE,
-        architecture = ModelArchitecture.FLORENCE2,
-        license = "MIT",
-        subdir = "models/florence2",
-        manifestFileName = "florence_manifest.json",
-        testTagPrefix = "florence",
+        architecture = ModelArchitecture.MINICPM_V46,
+        license = "Apache-2.0",
+        subdir = "models/minicpm_v_4_6",
+        manifestFileName = "minicpmv46_manifest.json",
+        testTagPrefix = "minicpmv46",
         hasRuntimeAdapter = true,
         artifacts = listOf(
             LocalModelArtifact(
-                relativePath = "config.json",
-                sourceUrl = florenceUrl("config.json"),
-                exactBytes = 5_447L,
-                role = ArtifactRole.CONFIG
+                relativePath = "MiniCPM-V-4_6-Q4_K_M.gguf",
+                sourceUrl = miniCpmV46Url("MiniCPM-V-4_6-Q4_K_M.gguf"),
+                expectedMinBytes = 500_000_000L,
+                md5Hex = "fd778481dd56b6036dd8f9cf7c1519cf",
+                role = ArtifactRole.GGUF_MODEL
             ),
             LocalModelArtifact(
-                relativePath = "generation_config.json",
-                sourceUrl = florenceUrl("generation_config.json"),
-                exactBytes = 297L,
-                role = ArtifactRole.GENERATION_CONFIG
-            ),
-            LocalModelArtifact(
-                relativePath = "preprocessor_config.json",
-                sourceUrl = florenceUrl("preprocessor_config.json"),
-                exactBytes = 2_673L,
-                role = ArtifactRole.PREPROCESSOR_CONFIG
-            ),
-            LocalModelArtifact(
-                relativePath = "processor_config.json",
-                sourceUrl = florenceUrl("processor_config.json"),
-                exactBytes = 130L,
-                role = ArtifactRole.PROCESSOR_CONFIG
-            ),
-            LocalModelArtifact(
-                relativePath = "tokenizer.json",
-                sourceUrl = florenceUrl("tokenizer.json"),
-                exactBytes = 2_297_961L,
-                role = ArtifactRole.TOKENIZER
-            ),
-            LocalModelArtifact(
-                relativePath = "tokenizer_config.json",
-                sourceUrl = florenceUrl("tokenizer_config.json"),
-                exactBytes = 197_658L,
-                role = ArtifactRole.TOKENIZER_CONFIG
-            ),
-            LocalModelArtifact(
-                relativePath = "special_tokens_map.json",
-                sourceUrl = florenceUrl("special_tokens_map.json"),
-                exactBytes = 146_627L,
-                role = ArtifactRole.SPECIAL_TOKENS
-            ),
-            LocalModelArtifact(
-                relativePath = "added_tokens.json",
-                sourceUrl = florenceUrl("added_tokens.json"),
-                exactBytes = 22_410L,
-                role = ArtifactRole.SPECIAL_TOKENS
-            ),
-            LocalModelArtifact(
-                relativePath = "onnx/vision_encoder_quantized.onnx",
-                sourceUrl = florenceUrl("onnx/vision_encoder_quantized.onnx"),
-                exactBytes = 93_788_276L,
-                role = ArtifactRole.ONNX_GRAPH
-            ),
-            LocalModelArtifact(
-                relativePath = "onnx/embed_tokens_quantized.onnx",
-                sourceUrl = florenceUrl("onnx/embed_tokens_quantized.onnx"),
-                exactBytes = 39_390_496L,
-                role = ArtifactRole.ONNX_GRAPH
-            ),
-            LocalModelArtifact(
-                relativePath = "onnx/encoder_model_quantized.onnx",
-                sourceUrl = florenceUrl("onnx/encoder_model_quantized.onnx"),
-                exactBytes = 43_651_493L,
-                role = ArtifactRole.ONNX_GRAPH
-            ),
-            LocalModelArtifact(
-                relativePath = "onnx/decoder_model_merged_quantized.onnx",
-                sourceUrl = florenceUrl("onnx/decoder_model_merged_quantized.onnx"),
-                exactBytes = 98_177_854L,
-                role = ArtifactRole.ONNX_GRAPH
+                relativePath = "mmproj-model-f16.gguf",
+                sourceUrl = miniCpmV46Url("mmproj-model-f16.gguf"),
+                expectedMinBytes = 1_100_000_000L,
+                md5Hex = "54aea6e04d752f47309a48f12795a1a3",
+                role = ArtifactRole.GGUF_MMPROJ
             )
         )
     )
@@ -118,7 +60,7 @@ object LocalModelRegistry {
     const val GEMMA_4_E2B_ID = "gemma_4_e2b"
     const val GEMMA_4_CANONICAL_ID = "gemma-4-e2b-it-litert-lm"
     const val GEMMA_4_REPO = "litert-community/gemma-4-E2B-it-litert-lm"
-    const val GEMMA_4_REVISION = "3d48132a00cf76de57d926de30f5c5c5ed9b8c0d"
+    const val GEMMA_4_REVISION = "6e5c4f1e395deb959c494953478fa5cec4b8008f"
 
     private fun gemma4Url(fileName: String): String =
         "$HF_RESOLVE_BASE/$GEMMA_4_REPO/resolve/$GEMMA_4_REVISION/$fileName"
@@ -126,30 +68,28 @@ object LocalModelRegistry {
     val GEMMA_4_SPEC = LocalModelSpec(
         id = GEMMA_4_E2B_ID,
         canonicalId = GEMMA_4_CANONICAL_ID,
-        legacyAliases = listOf("gemma4", "gemma_4", "gemma_3_1b_it", "gemma3_1b"),
+        legacyAliases = listOf("gemma4", "gemma_4"),
         displayName = "Gemma 4 E2B",
         upstreamRepo = GEMMA_4_REPO,
         upstreamRevision = GEMMA_4_REVISION,
-        description = "Google Gemma 4 E2B Multimodal Vision-Language Model for LiteRT-LM (CPU/GPU generic runtime, 2.59 GB)",
+        description = "Google Gemma 4 E2B multimodal vision-language model for LiteRT-LM image understanding (2.59 GB; 8 GB RAM-class device minimum).",
         taskType = ModelTaskType.VISION_LANGUAGE,
         architecture = ModelArchitecture.GEMMA4,
-        license = "Gemma Terms of Use",
+        license = "Apache-2.0",
         subdir = "models/gemma_4_e2b",
         manifestFileName = "gemma4_manifest.json",
         testTagPrefix = "gemma",
-        hasRuntimeAdapter = false, // Assets downloaded — runtime unavailable (LiteRT-LM runtime adapter not active)
+        hasRuntimeAdapter = true, // Gemma4RuntimeAdapter performs real LiteRT-LM image inference.
         artifacts = listOf(
             LocalModelArtifact(
                 relativePath = "gemma-4-E2B-it.litertlm",
                 sourceUrl = gemma4Url("gemma-4-E2B-it.litertlm"),
-                exactBytes = 2_781_778_740L,
+                exactBytes = 2_588_147_712L,
                 role = ArtifactRole.LITERT_MODEL
             )
         )
     )
 
-    // Backwards-compatibility alias
-    val GEMMA_3_SPEC = GEMMA_4_SPEC
 
     // --------------------------------------------------------------------------
     // 3. Liquid AI LFM2.5-VL-450M-Extract (llama.cpp)
@@ -165,7 +105,7 @@ object LocalModelRegistry {
     val LFM2_5_SPEC = LocalModelSpec(
         id = LFM2_5_VL_ID,
         canonicalId = LFM2_5_CANONICAL_ID,
-        legacyAliases = listOf("lfm2_5", "lfm2_5_vl", "lfm2_350m", "lfm2_350m_extract"),
+        legacyAliases = listOf("lfm2_5", "lfm2_5_vl"),
         displayName = "LFM2.5-VL-450M-Extract",
         upstreamRepo = LFM2_5_REPO,
         upstreamRevision = LFM2_5_REVISION,
@@ -193,8 +133,6 @@ object LocalModelRegistry {
         )
     )
 
-    // Backwards-compatibility alias
-    val LFM2_SPEC = LFM2_5_SPEC
 
     // --------------------------------------------------------------------------
     // 4. Alibaba Qwen 3.5 0.8B (llama.cpp / Unsloth)
@@ -210,7 +148,7 @@ object LocalModelRegistry {
     val QWEN3_5_SPEC = LocalModelSpec(
         id = QWEN3_5_ID,
         canonicalId = QWEN3_5_CANONICAL_ID,
-        legacyAliases = listOf("qwen3_5", "qwen3.5-0.8b", "qwen2_5_0_5b", "qwen2_5_05b"),
+        legacyAliases = listOf("qwen3_5", "qwen3.5-0.8b"),
         displayName = "Qwen3.5-0.8B",
         upstreamRepo = QWEN3_5_REPO,
         upstreamRevision = QWEN3_5_REVISION,
@@ -238,14 +176,12 @@ object LocalModelRegistry {
         )
     )
 
-    // Backwards-compatibility alias
-    val QWEN_2_5_SPEC = QWEN3_5_SPEC
 
     val ALL_MODELS: List<LocalModelSpec> = listOf(
         GEMMA_4_SPEC,
         LFM2_5_SPEC,
         QWEN3_5_SPEC,
-        FLORENCE_2_SPEC
+        MINI_CPM_V46_SPEC
     )
 
     fun findSpec(idOrAlias: String): LocalModelSpec? {
@@ -257,7 +193,18 @@ object LocalModelRegistry {
         }
     }
 
+    private val retiredLocalModelIds = setOf(
+        "florence2", "florence-2", "florence-2-base", "florence2_base",
+        "gemma_3_1b_it", "gemma3_1b",
+        "lfm2_350m", "lfm2_350m_extract",
+        "qwen2_5_0_5b", "qwen2_5_05b"
+    )
+
+    fun isRetiredLocalModelId(id: String): Boolean =
+        id.trim().lowercase() in retiredLocalModelIds
+
     fun getSpec(idOrAlias: String): LocalModelSpec {
-        return findSpec(idOrAlias) ?: FLORENCE_2_SPEC
+        return findSpec(idOrAlias)
+            ?: throw IllegalArgumentException("Unsupported local model id or alias: '" + idOrAlias + "'.")
     }
 }

@@ -1,7 +1,7 @@
 package com.amresalehin.emregallery
 
 import com.amresalehin.emregallery.ai.local.ArtifactRole
-import com.amresalehin.emregallery.ai.local.Florence2RuntimeAdapter
+import com.amresalehin.emregallery.ai.local.MiniCpmV46RuntimeAdapter
 import com.amresalehin.emregallery.ai.local.LocalModelArtifact
 import com.amresalehin.emregallery.ai.local.LocalModelDownloadManager
 import com.amresalehin.emregallery.ai.local.LocalModelInstaller
@@ -12,9 +12,9 @@ import com.amresalehin.emregallery.ai.local.SmokeTestResult
 import com.amresalehin.emregallery.data.CloudAiConnectionTester
 import com.amresalehin.emregallery.data.CloudAiProvider
 import com.amresalehin.emregallery.data.CloudProviderStatus
-import com.amresalehin.emregallery.data.FlorenceModelManager
-import com.amresalehin.emregallery.data.FlorenceModelState
-import com.amresalehin.emregallery.data.FlorenceStatus
+import com.amresalehin.emregallery.data.LocalModelManager
+import com.amresalehin.emregallery.data.LocalModelState
+import com.amresalehin.emregallery.data.LocalModelStatus
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.launch
@@ -143,41 +143,41 @@ class AiConfigurationTest {
     // -------------------------------------------------------------------------
 
     @Test
-    fun testFlorenceModelStateTransitions() {
-        var state = FlorenceModelState(status = FlorenceStatus.NOT_INSTALLED)
-        assertEquals(FlorenceStatus.NOT_INSTALLED, state.status)
+    fun testLocalModelStateTransitions() {
+        var state = LocalModelState(status = LocalModelStatus.NOT_INSTALLED)
+        assertEquals(LocalModelStatus.NOT_INSTALLED, state.status)
         assertEquals(0f, state.progress, 0.001f)
         assertFalse(state.status.isUsable)
 
         state = state.copy(
-            status = FlorenceStatus.DOWNLOADING,
+            status = LocalModelStatus.DOWNLOADING,
             progress = 0.45f,
             bytesDownloaded = 45000L,
             totalBytes = 100000L,
             speedBytesPerSec = 15000L,
             etaSeconds = 3L
         )
-        assertEquals(FlorenceStatus.DOWNLOADING, state.status)
+        assertEquals(LocalModelStatus.DOWNLOADING, state.status)
         assertEquals(0.45f, state.progress, 0.001f)
         assertEquals(45000L, state.bytesDownloaded)
         assertEquals(15000L, state.speedBytesPerSec)
         assertEquals(3L, state.etaSeconds)
 
-        state = state.copy(status = FlorenceStatus.VERIFYING, progress = 0.95f)
-        assertEquals(FlorenceStatus.VERIFYING, state.status)
+        state = state.copy(status = LocalModelStatus.VERIFYING, progress = 0.95f)
+        assertEquals(LocalModelStatus.VERIFYING, state.status)
 
         state = state.copy(
-            status = FlorenceStatus.READY,
+            status = LocalModelStatus.READY,
             progress = 1.0f,
             installedSizeBytes = 100000L,
-            installedPath = "/path/florence2",
+            installedPath = "/path/minicpm_v_4_6",
             runtimeReady = true
         )
-        assertEquals(FlorenceStatus.READY, state.status)
+        assertEquals(LocalModelStatus.READY, state.status)
         assertTrue(state.status.isUsable)
         assertTrue(state.runtimeReady)
         assertEquals(1.0f, state.progress, 0.001f)
-        assertEquals("/path/florence2", state.installedPath)
+        assertEquals("/path/minicpm_v_4_6", state.installedPath)
         assertEquals(100000L, state.installedSizeBytes)
     }
 
@@ -209,23 +209,26 @@ class AiConfigurationTest {
     }
 
     @Test
-    fun testFlorence2CompleteArtifactContract() {
-        val florence = LocalModelRegistry.FLORENCE_2_SPEC
-        assertEquals("Florence-2 Base", florence.displayName)
-        assertEquals("onnx-community/Florence-2-base", florence.upstreamRepo)
-        assertEquals(ModelTaskType.VISION_LANGUAGE, florence.taskType)
-        assertEquals(ModelArchitecture.FLORENCE2, florence.architecture)
-        assertTrue("Florence-2 must have runtime adapter", florence.hasRuntimeAdapter)
+    fun testMiniCpmV46ArtifactContract() {
+        val minicpm = LocalModelRegistry.MINI_CPM_V46_SPEC
+        assertEquals("MiniCPM-V 4.6 (1.3B)", minicpm.displayName)
+        assertEquals("openbmb/MiniCPM-V-4.6-gguf", minicpm.upstreamRepo)
+        assertEquals("78e02f066e9819a60573b78a4275df8a0c27f698", minicpm.upstreamRevision)
+        assertEquals(ModelTaskType.VISION_LANGUAGE, minicpm.taskType)
+        assertEquals(ModelArchitecture.MINICPM_V46, minicpm.architecture)
+        assertTrue("MiniCPM-V 4.6 must have a real multimodal runtime adapter", minicpm.hasRuntimeAdapter)
+        assertEquals(2, minicpm.artifacts.size)
 
-        val paths = florence.artifacts.map { it.relativePath }
-        assertTrue("Must include vision encoder", paths.contains("onnx/vision_encoder_quantized.onnx"))
-        assertTrue("Must include embed tokens", paths.contains("onnx/embed_tokens_quantized.onnx"))
-        assertTrue("Must include text encoder", paths.contains("onnx/encoder_model_quantized.onnx"))
-        assertTrue("Must include merged decoder", paths.contains("onnx/decoder_model_merged_quantized.onnx"))
-        assertTrue("Must include preprocessor config", paths.contains("preprocessor_config.json"))
-        assertTrue("Must include tokenizer", paths.contains("tokenizer.json"))
-        assertTrue("Must include generation config", paths.contains("generation_config.json"))
-        assertEquals(12, florence.artifacts.size)
+        val model = minicpm.artifacts.firstOrNull { it.role == ArtifactRole.GGUF_MODEL }
+        val projector = minicpm.artifacts.firstOrNull { it.role == ArtifactRole.GGUF_MMPROJ }
+        assertNotNull("MiniCPM must include its Q4_K_M language model", model)
+        assertNotNull("MiniCPM must include its F16 vision projector", projector)
+        assertEquals("MiniCPM-V-4_6-Q4_K_M.gguf", model?.relativePath)
+        assertEquals("mmproj-model-f16.gguf", projector?.relativePath)
+        assertEquals("fd778481dd56b6036dd8f9cf7c1519cf", model?.md5Hex)
+        assertEquals("54aea6e04d752f47309a48f12795a1a3", projector?.md5Hex)
+        assertTrue((model?.expectedMinBytes ?: 0L) >= 500_000_000L)
+        assertTrue((projector?.expectedMinBytes ?: 0L) >= 1_100_000_000L)
     }
 
     @Test
@@ -235,12 +238,14 @@ class AiConfigurationTest {
         assertEquals("litert-community/gemma-4-E2B-it-litert-lm", gemma.upstreamRepo)
         assertEquals(ModelTaskType.VISION_LANGUAGE, gemma.taskType)
         assertEquals(ModelArchitecture.GEMMA4, gemma.architecture)
-        assertFalse("Gemma 4 runtime adapter not active yet", gemma.hasRuntimeAdapter)
+        assertTrue("Gemma 4 has a real LiteRT-LM image-inference adapter", gemma.hasRuntimeAdapter)
+        assertEquals("Apache-2.0", gemma.license)
+        assertEquals("6e5c4f1e395deb959c494953478fa5cec4b8008f", gemma.upstreamRevision)
 
         val artifact = gemma.artifacts.firstOrNull { it.role == ArtifactRole.LITERT_MODEL }
         assertNotNull("Gemma 4 must declare generic litertlm artifact", artifact)
         assertEquals("gemma-4-E2B-it.litertlm", artifact?.relativePath)
-        assertEquals(2_781_778_740L, artifact?.exactBytes)
+        assertEquals(2_588_147_712L, artifact?.exactBytes)
     }
 
     @Test
@@ -286,13 +291,16 @@ class AiConfigurationTest {
 
     @Test
     fun testLegacyAliasResolution() {
-        assertEquals("florence2", FlorenceModelManager.getSpec("florence2").id)
-        assertEquals("gemma_4_e2b", FlorenceModelManager.getSpec("gemma_4_e2b").id)
-        assertEquals("gemma_4_e2b", FlorenceModelManager.getSpec("gemma_3_1b_it").id)
-        assertEquals("lfm2_5_vl_450m_extract", FlorenceModelManager.getSpec("lfm2_5_vl_450m_extract").id)
-        assertEquals("lfm2_5_vl_450m_extract", FlorenceModelManager.getSpec("lfm2_350m").id)
-        assertEquals("qwen3_5_0_8b", FlorenceModelManager.getSpec("qwen3_5_0_8b").id)
-        assertEquals("qwen3_5_0_8b", FlorenceModelManager.getSpec("qwen2_5_0_5b").id)
+        assertEquals("minicpm_v_4_6", LocalModelManager.getSpec("minicpm_v_4_6").id)
+        assertEquals("minicpm_v_4_6", LocalModelManager.getSpec("minicpm-v-4.6").id)
+        assertNull(LocalModelRegistry.findSpec("florence2"))
+        assertEquals("gemma_4_e2b", LocalModelManager.getSpec("gemma_4_e2b").id)
+        assertEquals("gemma_4_e2b", LocalModelManager.getSpec("gemma4").id)
+        assertEquals("lfm2_5_vl_450m_extract", LocalModelManager.getSpec("lfm2_5_vl_450m_extract").id)
+        assertEquals("qwen3_5_0_8b", LocalModelManager.getSpec("qwen3_5_0_8b").id)
+        assertNull(LocalModelRegistry.findSpec("gemma_3_1b_it"))
+        assertNull(LocalModelRegistry.findSpec("lfm2_350m"))
+        assertNull(LocalModelRegistry.findSpec("qwen2_5_0_5b"))
     }
 
     // -------------------------------------------------------------------------
@@ -344,7 +352,7 @@ class AiConfigurationTest {
             assertTrue("Error should mention HTTP 404: ${e.message}", e.message?.contains("404") == true)
         }
 
-        mockWebServer.enqueue(MockResponse().setResponseCode(500))
+        repeat(3) { mockWebServer.enqueue(MockResponse().setResponseCode(500)) }
         val url500 = mockWebServer.url("/server-error").toString()
 
         try {
@@ -441,14 +449,14 @@ class AiConfigurationTest {
 
     @Test
     fun testInstallationStatusRejectsIncompleteOrTruncatedArtifacts() {
-        val spec = LocalModelRegistry.FLORENCE_2_SPEC
+        val spec = LocalModelRegistry.GEMMA_4_SPEC
         val modelDir = File(testFilesDir, spec.subdir)
         modelDir.deleteRecursively()
         modelDir.mkdirs()
 
         // 1. Empty directory -> NOT_INSTALLED
         var state = LocalModelInstaller.checkInstallationStatus(testFilesDir, spec)
-        assertEquals(FlorenceStatus.NOT_INSTALLED, state.status)
+        assertEquals(LocalModelStatus.NOT_INSTALLED, state.status)
 
         // 2. Write valid manifest, but missing actual artifacts -> NOT_INSTALLED
         val manifest = JSONObject().apply {
@@ -461,7 +469,7 @@ class AiConfigurationTest {
         File(modelDir, spec.manifestFileName).writeText(manifest.toString())
 
         state = LocalModelInstaller.checkInstallationStatus(testFilesDir, spec)
-        assertEquals(FlorenceStatus.NOT_INSTALLED, state.status)
+        assertEquals(LocalModelStatus.NOT_INSTALLED, state.status)
 
         // 3. Create all files but make one truncated
         for (art in spec.artifacts) {
@@ -469,9 +477,9 @@ class AiConfigurationTest {
             createDummyFileOfSize(f, art.exactBytes ?: art.expectedMinBytes)
         }
         // Truncate config.json to 0 bytes
-        File(modelDir, "config.json").writeText("")
+        File(modelDir, spec.artifacts.first().relativePath).writeText("")
         state = LocalModelInstaller.checkInstallationStatus(testFilesDir, spec)
-        assertEquals(FlorenceStatus.ERROR, state.status)
+        assertEquals(LocalModelStatus.ERROR, state.status)
         assertTrue(state.errorMessage?.contains("truncated") == true)
 
         modelDir.deleteRecursively()
@@ -479,7 +487,7 @@ class AiConfigurationTest {
 
     @Test
     fun testInstallationStatusRejectsMismatchedCommitRevision() {
-        val spec = LocalModelRegistry.FLORENCE_2_SPEC
+        val spec = LocalModelRegistry.GEMMA_4_SPEC
         val modelDir = File(testFilesDir, spec.subdir)
         modelDir.deleteRecursively()
         modelDir.mkdirs()
@@ -500,7 +508,7 @@ class AiConfigurationTest {
         File(modelDir, spec.manifestFileName).writeText(manifest.toString())
 
         val state = LocalModelInstaller.checkInstallationStatus(testFilesDir, spec)
-        assertEquals(FlorenceStatus.ERROR, state.status)
+        assertEquals(LocalModelStatus.ERROR, state.status)
         assertTrue(state.errorMessage?.contains("revision mismatch") == true)
 
         modelDir.deleteRecursively()
@@ -514,10 +522,11 @@ class AiConfigurationTest {
         val expectedHash = "dffd6021bb2bd5b0af676290809ec3a53191dd81c7f70a4b28688a362182986f"
         val computed = LocalModelInstaller.computeSha256(testFile)
         assertEquals(expectedHash, computed)
+        assertEquals("65a8e27d8879283831b664bd8b7f0ad4", LocalModelInstaller.computeMd5(testFile))
     }
 
     @Test
-    fun testModelWithoutRuntimeMarkedAssetsOnly() {
+    fun testAssetsOnlyManifestDoesNotBecomeRuntimeReady() {
         val gemma = LocalModelRegistry.GEMMA_4_SPEC
         val modelDir = File(testFilesDir, gemma.subdir)
         modelDir.deleteRecursively()
@@ -539,22 +548,98 @@ class AiConfigurationTest {
         File(modelDir, gemma.manifestFileName).writeText(manifest.toString())
 
         val state = LocalModelInstaller.checkInstallationStatus(testFilesDir, gemma)
-        assertEquals(FlorenceStatus.ASSETS_DOWNLOADED_RUNTIME_UNAVAILABLE, state.status)
-        assertFalse("Gemma must not be ready as it has no runtime adapter", state.runtimeReady)
+        assertEquals(LocalModelStatus.ASSETS_DOWNLOADED_RUNTIME_UNAVAILABLE, state.status)
+        assertFalse("An assets-only Gemma manifest must remain non-ready", state.runtimeReady)
 
         modelDir.deleteRecursively()
     }
 
     @Test
-    fun testFlorence2RuntimeValidationContract() = runBlocking {
-        val adapter = Florence2RuntimeAdapter()
-        val emptyDir = tempFolder.newFolder("empty_florence")
+    fun testGemmaReadyManifestIsReportedRuntimeReady() {
+        val spec = LocalModelRegistry.GEMMA_4_SPEC
+        val modelDir = File(testFilesDir, spec.subdir)
+        modelDir.deleteRecursively()
+        modelDir.mkdirs()
+        for (artifact in spec.artifacts) {
+            createDummyFileOfSize(File(modelDir, artifact.relativePath), artifact.exactBytes ?: artifact.expectedMinBytes)
+        }
+        val manifest = JSONObject().apply {
+            put("id", spec.id)
+            put("upstreamRepo", spec.upstreamRepo)
+            put("upstreamRevision", spec.upstreamRevision)
+            put("status", "READY")
+            put("hasRuntimeAdapter", true)
+        }
+        File(modelDir, spec.manifestFileName).writeText(manifest.toString())
 
-        val result = adapter.validateGraphAndRunSmokeTest(emptyDir)
-        assertTrue("Empty dir should fail validation", result is SmokeTestResult.Failure)
-        val failure = result as SmokeTestResult.Failure
-        assertEquals("artifact_check", failure.failedStage)
-        assertTrue(failure.reason.contains("Missing or empty files"))
-        assertFalse(adapter.isReady)
+        val state = LocalModelInstaller.checkInstallationStatus(testFilesDir, spec)
+        assertEquals(LocalModelStatus.READY, state.status)
+        assertTrue(state.runtimeReady)
+        modelDir.deleteRecursively()
     }
+
+    @Test
+    fun testDownloaderRetriesTransientHttpFailure() = runBlocking {
+        val targetFile = tempFolder.newFile("retry_test.bin").apply { delete() }
+        mockWebServer.enqueue(MockResponse().setResponseCode(503))
+        mockWebServer.enqueue(MockResponse().setResponseCode(200).setBody("RETRIED_OK"))
+        LocalModelDownloadManager.downloadArtifactFile(
+            url = mockWebServer.url("/retry").toString(),
+            destination = targetFile,
+            expectedBytes = "RETRIED_OK".length.toLong(),
+            onProgress = {}
+        )
+        assertEquals("RETRIED_OK", targetFile.readText())
+        assertEquals(2, mockWebServer.requestCount)
+    }
+
+    @Test
+    fun testDownloaderFollowsSeeOtherRedirect() = runBlocking {
+        val targetFile = tempFolder.newFile("see_other_test.bin").apply { delete() }
+        mockWebServer.enqueue(MockResponse().setResponseCode(303).setHeader("Location", "/after-redirect"))
+        mockWebServer.enqueue(MockResponse().setResponseCode(200).setBody("REDIRECT_OK"))
+        LocalModelDownloadManager.downloadArtifactFile(
+            url = mockWebServer.url("/redirect").toString(),
+            destination = targetFile,
+            expectedBytes = "REDIRECT_OK".length.toLong(),
+            onProgress = {}
+        )
+        assertEquals("REDIRECT_OK", targetFile.readText())
+    }
+
+    @Test
+    fun testDownloaderRejectsWrongContentRangeOffset() = runBlocking {
+        val targetFile = tempFolder.newFile("bad_range_test.bin")
+        targetFile.writeText("PREFIX")
+        repeat(3) {
+            mockWebServer.enqueue(
+                MockResponse().setResponseCode(206)
+                    .setHeader("Content-Range", "bytes 5-8/10")
+                    .setBody("DATA")
+            )
+        }
+        try {
+            LocalModelDownloadManager.downloadArtifactFile(
+                url = mockWebServer.url("/bad-range").toString(),
+                destination = targetFile,
+                expectedBytes = 10L,
+                onProgress = {}
+            )
+            fail("Expected IOException for mismatched Content-Range offset")
+        } catch (e: IOException) {
+            assertTrue(e.message.orEmpty().contains("Content-Range"))
+        }
+        assertFalse("Invalid partial data must not be retained", targetFile.exists())
+    }
+
+    @Test
+    fun testUnknownModelIdDoesNotFallBackToLocal() {
+        try {
+            LocalModelRegistry.getSpec("not-a-real-model")
+            fail("Unknown model ID must be rejected")
+        } catch (e: IllegalArgumentException) {
+            assertTrue(e.message.orEmpty().contains("not-a-real-model"))
+        }
+    }
+
 }

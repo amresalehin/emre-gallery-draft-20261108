@@ -14,8 +14,8 @@ enum class ModelTaskType(val label: String) {
  * Supported underlying model architecture families.
  */
 enum class ModelArchitecture(val family: String) {
-    FLORENCE2("Florence-2 Encoder-Decoder"),
     GEMMA4("Gemma 4 LiteRT-LM"),
+    MINICPM_V46("MiniCPM-V 4.6 llama.cpp"),
     LFM2_5("LFM2.5-VL llama.cpp"),
     QWEN3_5("Qwen 3.5 llama.cpp"),
     GEMMA3("Gemma-3 Autoregressive Decoder"),
@@ -51,6 +51,7 @@ data class LocalModelArtifact(
     val exactBytes: Long? = null,
     val expectedMinBytes: Long = 10L,
     val sha256Hex: String? = null,
+    val md5Hex: String? = null,
     val isRequired: Boolean = true,
     val role: ArtifactRole = ArtifactRole.ONNX_GRAPH,
     val externalDataFor: String? = null

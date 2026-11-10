@@ -31,9 +31,11 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.amresalehin.emregallery.ai.local.Gemma4RuntimeAdapter
+import com.amresalehin.emregallery.ai.local.MiniCpmV46RuntimeAdapter
 import com.amresalehin.emregallery.ai.tagging.AiTaggingSettings
-import com.amresalehin.emregallery.data.FlorenceModelManager
-import com.amresalehin.emregallery.data.FlorenceStatus
+import com.amresalehin.emregallery.data.LocalModelManager
+import com.amresalehin.emregallery.data.LocalModelStatus
 import com.amresalehin.emregallery.data.PreferencesRepository
 import kotlinx.coroutines.launch
 import java.text.NumberFormat
@@ -74,7 +76,7 @@ fun AiTaggingCard(
 
     val cloudProviders by prefs.cloudProviders.collectAsState(initial = emptyList())
     val activeCloudProvider by prefs.activeCloudProvider.collectAsState(initial = null)
-    val allModelStates by FlorenceModelManager.allModelStates.collectAsState()
+    val allModelStates by LocalModelManager.allModelStates.collectAsState()
 
     // Model selection state
     var selectedModelId by remember {
@@ -91,22 +93,20 @@ fun AiTaggingCard(
 
     // Sync installed states on mount
     LaunchedEffect(Unit) {
-        FlorenceModelManager.refreshAllStates(context)
+        LocalModelManager.refreshAllStates(context)
     }
 
-    // If legacy smart_vision was selected, migrate to Florence-2
-    if (selectedModelId == "smart_vision") {
-        selectedModelId = AiTaggingSettings.MODEL_FLORENCE_2
-        AiTaggingSettings.setSelectedModel(context, AiTaggingSettings.MODEL_FLORENCE_2)
+    // Legacy smart_vision and Florence selections now migrate to MiniCPM-V 4.6.
+    if (selectedModelId == "smart_vision" || selectedModelId.startsWith("florence")) {
+        selectedModelId = AiTaggingSettings.MODEL_MINI_CPM_V46
+        AiTaggingSettings.setSelectedModel(context, AiTaggingSettings.MODEL_MINI_CPM_V46)
     }
 
-    // List of available models (The 4 downloaded on-device models + Cloud models)
+    // Only offer local models that implement actual image-to-text inference.
     val availableModels = remember(activeCloudProvider, cloudProviders) {
         val models = mutableListOf(
-            TaggingModelOption(AiTaggingSettings.MODEL_FLORENCE_2, "Florence-2", isLocalAiModel = true),
-            TaggingModelOption(AiTaggingSettings.MODEL_GEMMA_4, "Gemma 4", isLocalAiModel = true),
-            TaggingModelOption(AiTaggingSettings.MODEL_LFM_2_5, "LFM2.5-VL", isLocalAiModel = true),
-            TaggingModelOption(AiTaggingSettings.MODEL_QWEN_3_5, "Qwen3.5", isLocalAiModel = true)
+            TaggingModelOption(AiTaggingSettings.MODEL_MINI_CPM_V46, "MiniCPM-V 4.6 (1.3B)", isLocalAiModel = true),
+            TaggingModelOption(AiTaggingSettings.MODEL_GEMMA_4, "Gemma 4 E2B", isLocalAiModel = true)
         )
         cloudProviders.forEach { provider ->
             val label = if (provider.modelId.isNotBlank()) {
@@ -128,14 +128,20 @@ fun AiTaggingCard(
     val isCloud = selectedModelId == AiTaggingSettings.MODEL_CLOUD ||
             selectedModelId.startsWith("cloud") ||
             cloudProviders.any { it.id == selectedModelId }
-    val currentModelState = allModelStates[selectedModelId] ?: FlorenceModelManager.getModelState(selectedModelId)
+    val currentModelState = allModelStates[selectedModelId] ?: LocalModelManager.getModelState(selectedModelId)
+
+    val selectedModelMemoryError = when (selectedModelId) {
+        AiTaggingSettings.MODEL_MINI_CPM_V46 -> MiniCpmV46RuntimeAdapter.deviceClassRequirementMessage(context)
+        AiTaggingSettings.MODEL_GEMMA_4 -> Gemma4RuntimeAdapter.deviceClassRequirementMessage(context)
+        else -> null
+    }
 
     val isModelInstalled = when {
         isCloud -> true
-        else -> FlorenceModelManager.isInstalled(context, selectedModelId) || currentModelState.status.isUsable
+        else -> LocalModelManager.isInstalled(context, selectedModelId) || currentModelState.status.isUsable
     }
 
-    val isModelDownloading = !isCloud && currentModelState.status == FlorenceStatus.DOWNLOADING
+    val isModelDownloading = !isCloud && currentModelState.status == LocalModelStatus.DOWNLOADING
     val modelDownloadPercent = (currentModelState.progress * 100f).roundToInt().coerceIn(0, 100)
 
     val isRunning = taggingState.isRunning && !taggingState.isPaused
@@ -241,25 +247,35 @@ fun AiTaggingCard(
                         onClick = {
                             when {
                                 isModelDownloading -> {
-                                    FlorenceModelManager.cancelDownload(context, selectedModelId)
+                                    LocalModelManager.cancelDownload(context, selectedModelId)
                                     onShowSnackbar?.invoke("Download cancelled")
                                 }
                                 !isModelInstalled -> {
                                     scope.launch {
                                         val modelName = availableModels.firstOrNull { it.id == selectedModelId }?.displayName ?: selectedModelId
-                                        onShowSnackbar?.invoke("Downloading $modelName model...")
-                                        val ok = FlorenceModelManager.downloadAndInstallModel(context, selectedModelId)
-                                        if (ok) {
-                                            onShowSnackbar?.invoke("$modelName model ready")
+                                        if (selectedModelMemoryError != null) {
+                                            onShowSnackbar?.invoke(selectedModelMemoryError)
                                         } else {
-                                            val state = FlorenceModelManager.getModelState(selectedModelId)
-                                            onShowSnackbar?.invoke(state.errorMessage ?: "Download failed")
+                                            onShowSnackbar?.invoke("Downloading $modelName model...")
+                                            val ok = LocalModelManager.downloadAndInstallModel(context, selectedModelId)
+                                            if (ok) {
+                                                onShowSnackbar?.invoke("$modelName model ready")
+                                            } else {
+                                                val state = LocalModelManager.getModelState(selectedModelId)
+                                                onShowSnackbar?.invoke(state.errorMessage ?: "Download failed")
+                                            }
                                         }
                                     }
                                 }
                                 isRunning -> onStopTagging()
                                 isCompleted -> showActionMenu = true
-                                else -> triggerTagging(false)
+                                else -> {
+                                    if (selectedModelMemoryError != null) {
+                                        onShowSnackbar?.invoke(selectedModelMemoryError)
+                                    } else {
+                                        triggerTagging(false)
+                                    }
+                                }
                             }
                         },
                         shape = RoundedCornerShape(14.dp),

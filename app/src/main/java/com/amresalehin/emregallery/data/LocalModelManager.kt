@@ -11,17 +11,17 @@ import java.io.File
  * Facade managing local AI models, bridging the UI and background workers
  * to the robust LocalModelRegistry, LocalModelInstaller, and LocalModelStateStore subsystems.
  */
-object FlorenceModelManager {
+object LocalModelManager {
 
-    const val MODEL_NAME = "Florence-2"
-    const val MODEL_VERSION = "Florence-2-base"
+    const val MODEL_NAME = "MiniCPM-V 4.6"
+    const val MODEL_VERSION = "MiniCPM-V-4.6"
 
     data class ModelArtifact(
         val fileName: String,
         val url: String,
         val estimatedSize: Long,
         val exactBytes: Long? = null,
-        val role: String = "ONNX_GRAPH",
+        val role: String = "MODEL_ARTIFACT",
         val externalDataFor: String? = null
     )
 
@@ -40,10 +40,10 @@ object FlorenceModelManager {
         val artifacts: List<ModelArtifact>
     )
 
-    val modelState: StateFlow<FlorenceModelState>
-        get() = LocalModelStateStore.florenceState
+    val modelState: StateFlow<LocalModelState>
+        get() = LocalModelStateStore.modelState
 
-    val allModelStates: StateFlow<Map<String, FlorenceModelState>>
+    val allModelStates: StateFlow<Map<String, LocalModelState>>
         get() = LocalModelStateStore.allModelStates
 
     val SUPPORTED_MODELS: List<LocalModelSpec> = LocalModelRegistry.ALL_MODELS.map { reg ->
@@ -74,35 +74,36 @@ object FlorenceModelManager {
 
     fun getSpec(modelId: String): LocalModelSpec {
         val reg = LocalModelRegistry.getSpec(modelId)
-        return SUPPORTED_MODELS.firstOrNull { it.id == reg.id } ?: SUPPORTED_MODELS.first { it.id == "florence2" }
+        return SUPPORTED_MODELS.firstOrNull { it.id == reg.id }
+            ?: throw IllegalStateException("Registered model is missing from SUPPORTED_MODELS: " + reg.id)
     }
 
-    fun getModelDir(context: Context, modelId: String = "florence2"): File {
+    fun getModelDir(context: Context, modelId: String = "minicpm_v_4_6"): File {
         val reg = LocalModelRegistry.getSpec(modelId)
         return LocalModelInstaller.getModelDir(context, reg)
     }
 
-    fun isInstalled(context: Context, modelId: String = "florence2"): Boolean {
+    fun isInstalled(context: Context, modelId: String = "minicpm_v_4_6"): Boolean {
         val reg = LocalModelRegistry.getSpec(modelId)
         return LocalModelInstaller.isInstalled(context, reg)
     }
 
-    fun getInstalledSizeBytes(context: Context, modelId: String = "florence2"): Long {
+    fun getInstalledSizeBytes(context: Context, modelId: String = "minicpm_v_4_6"): Long {
         val dir = getModelDir(context, modelId)
         if (!dir.exists()) return 0L
         return dir.walkTopDown().filter { it.isFile && !it.name.startsWith(".") }.map { it.length() }.sum()
     }
 
-    fun refreshAllStates(context: Context): Map<String, FlorenceModelState> {
+    fun refreshAllStates(context: Context): Map<String, LocalModelState> {
         return LocalModelStateStore.refreshAll(context)
     }
 
-    fun refreshState(context: Context): FlorenceModelState {
+    fun refreshState(context: Context): LocalModelState {
         val all = refreshAllStates(context)
-        return all["florence2"] ?: FlorenceModelState()
+        return all["minicpm_v_4_6"] ?: LocalModelState()
     }
 
-    fun getModelState(modelId: String): FlorenceModelState {
+    fun getModelState(modelId: String): LocalModelState {
         return LocalModelStateStore.getState(modelId)
     }
 
@@ -117,15 +118,15 @@ object FlorenceModelManager {
     suspend fun downloadAndInstall(
         context: Context,
         onProgress: ((progress: Float, downloaded: Long, total: Long) -> Unit)? = null
-    ): Boolean = downloadAndInstallModel(context, "florence2", onProgress)
+    ): Boolean = downloadAndInstallModel(context, "minicpm_v_4_6", onProgress)
 
     suspend fun uninstallModel(context: Context, modelId: String): Boolean {
         return LocalModelStateStore.uninstall(context, modelId)
     }
 
-    suspend fun uninstall(context: Context): Boolean = uninstallModel(context, "florence2")
+    suspend fun uninstall(context: Context): Boolean = uninstallModel(context, "minicpm_v_4_6")
 
-    fun cancelDownload(context: Context, modelId: String = "florence2") {
+    fun cancelDownload(context: Context, modelId: String = "minicpm_v_4_6") {
         LocalModelStateStore.cancelDownload(context, modelId)
     }
 }

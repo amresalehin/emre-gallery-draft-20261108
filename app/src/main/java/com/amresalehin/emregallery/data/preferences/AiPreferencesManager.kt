@@ -6,8 +6,8 @@ import androidx.datastore.preferences.core.stringPreferencesKey
 import com.amresalehin.emregallery.data.CloudAiConnectionTester
 import com.amresalehin.emregallery.data.CloudAiProvider
 import com.amresalehin.emregallery.data.CloudProviderStatus
-import com.amresalehin.emregallery.data.FlorenceModelManager
-import com.amresalehin.emregallery.data.FlorenceModelState
+import com.amresalehin.emregallery.data.LocalModelManager
+import com.amresalehin.emregallery.data.LocalModelState
 import com.amresalehin.emregallery.data.galleryDataStore
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -36,7 +36,7 @@ class AiPreferencesManager(private val context: Context) {
         providers.firstOrNull { it.id == activeId } ?: providers.firstOrNull { it.isActive }
     }.distinctUntilChanged()
 
-    val florenceModelState: Flow<FlorenceModelState> = FlorenceModelManager.modelState
+    val localModelState: Flow<LocalModelState> = LocalModelManager.modelState
 
     suspend fun saveProvider(provider: CloudAiProvider) {
         context.galleryDataStore.edit { prefs ->

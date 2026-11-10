@@ -527,6 +527,7 @@ class IndexingForegroundService : Service() {
         postProgress("AI image tagging", "Scanning ${pending.size} photos with AI vision", doneCount, photos.size)
         var completed = doneCount
         val effectiveModel = modelId ?: com.amresalehin.emregallery.ai.tagging.AiTaggingSettings.getSelectedModel(applicationContext)
+        try {
         for (item in pending) {
             awaitResume()
             val result = com.amresalehin.emregallery.ai.tagging.AiImageTagger.tagAndSave(
@@ -543,12 +544,15 @@ class IndexingForegroundService : Service() {
                 processed = completed,
                 total = photos.size,
                 currentItemName = item.name,
-                currentItemStatus = if (result.tags.isNotEmpty()) result.tags.joinToString(", ") else "No tags"
+                currentItemStatus = if (result.tags.isNotEmpty()) result.tags.joinToString(", ") else (result.errorMessage ?: "No tags generated")
             )
             if (completed % 5 == 0 || completed == photos.size) {
                 postProgress("AI image tagging", "${item.name} ($completed/${photos.size})", completed, photos.size)
             }
             kotlinx.coroutines.yield()
+        }
+        } finally {
+            com.amresalehin.emregallery.ai.local.LocalModelRuntimeRegistry.closeRuntime(effectiveModel)
         }
     }
 

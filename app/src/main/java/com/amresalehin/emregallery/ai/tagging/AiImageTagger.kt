@@ -8,12 +8,20 @@ import android.net.Uri
 import android.util.Base64
 import android.util.Log
 import androidx.exifinterface.media.ExifInterface
+import com.amresalehin.emregallery.ai.local.Gemma4RuntimeAdapter
+import com.amresalehin.emregallery.ai.local.LocalImageTaggingRuntime
+import com.amresalehin.emregallery.ai.local.MiniCpmV46RuntimeAdapter
+import com.amresalehin.emregallery.ai.local.LocalModelInstaller
+import com.amresalehin.emregallery.ai.local.LocalModelRegistry
+import com.amresalehin.emregallery.ai.local.LocalModelRuntimeRegistry
+import com.amresalehin.emregallery.ai.local.ModelArchitecture
 import com.amresalehin.emregallery.data.CloudAiProvider
-import com.amresalehin.emregallery.data.FlorenceModelManager
+import com.amresalehin.emregallery.data.LocalModelStatus
 import com.amresalehin.emregallery.data.MediaItem
 import com.amresalehin.emregallery.data.PreferencesRepository
 import com.amresalehin.emregallery.data.preferences.AiPreferencesManager
 import com.amresalehin.emregallery.ocr.TesseractOcr
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
@@ -45,7 +53,7 @@ data class AiTaggingResult(
  * Comprehensive AI Image Tagging Engine.
  * Supports:
  * 1. Cloud Multimodal Vision AI (OpenAI, Groq, Ollama, OpenRouter, Anthropic-compatible endpoints)
- * 2. On-Device Vision-Language Model (Florence-2 Base)
+ * 2. On-device MiniCPM-V 4.6 and Gemma 4 image inference
  * 3. Smart On-Device Vision Analyzer (zero-latency offline analysis of color, scene, EXIF, and OCR features)
  */
 object AiImageTagger {
@@ -88,11 +96,8 @@ object AiImageTagger {
 
     /**
      * Generates a list of descriptive tags for the specified image item.
-     * Strictly supports either Cloud AI models or one of the four downloaded on-device models:
-     * 1. Florence-2 Base
-     * 2. Gemma 4 E2B
-     * 3. LFM2.5-VL-450M
-     * 4. Qwen3.5-0.8B
+     * Supports configured Cloud Vision providers, Gemma 4 E2B, and MiniCPM-V 4.6 local image inference.
+     * Other local model files remain unavailable until a real inference adapter is implemented.
      */
     suspend fun generateTags(
         context: Context,
@@ -104,96 +109,97 @@ object AiImageTagger {
         val rawModel = (preferredModel ?: AiTaggingSettings.getSelectedModel(context)).trim()
         val targetModel = rawModel.lowercase()
 
-        // 1. FLORENCE-2 BASE (1 of 4 downloaded on-device models)
-        if (targetModel == AiTaggingSettings.MODEL_FLORENCE_2 || targetModel == "florence-2" || targetModel == "florence-2-base") {
-            val isInstalled = FlorenceModelManager.isInstalled(context, "florence2")
-            val durationMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startNs)
-            if (isInstalled) {
-                val localResult = runCatching {
-                    tagWithLocalFlorence(context, item)
-                }.getOrNull()
+        fun failure(engineName: String, message: String) = AiTaggingResult(
+            tags = emptyList(),
+            engineName = engineName,
+            durationMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startNs),
+            isSuccess = false,
+            errorMessage = message
+        )
 
-                if (localResult != null && localResult.isNotEmpty()) {
-                    return@withContext AiTaggingResult(
-                        tags = localResult,
-                        engineName = "Florence-2 On-Device",
-                        durationMs = durationMs
-                    )
+        val localSpec = LocalModelRegistry.findSpec(targetModel)
+        if (localSpec != null || LocalModelRegistry.isRetiredLocalModelId(targetModel)) {
+            if (localSpec == null) {
+                return@withContext failure(
+                    "Local model unavailable",
+                    "This local model generation is no longer supported. Select an installed local model or configure a Cloud AI provider."
+                )
+            }
+            if (!localSpec.hasRuntimeAdapter) {
+                return@withContext failure(
+                    localSpec.displayName,
+                    "${localSpec.displayName} can be downloaded, but its image-inference runtime is not available in this build. No tags were generated."
+                )
+            }
+            if (item.isVideo) {
+                return@withContext failure(localSpec.displayName, "${localSpec.displayName} image tagging currently accepts photos, not video files.")
+            }
+
+            val memoryMessage = when (localSpec.architecture) {
+                ModelArchitecture.GEMMA4 -> Gemma4RuntimeAdapter.deviceClassRequirementMessage(context)
+                ModelArchitecture.MINICPM_V46 -> MiniCpmV46RuntimeAdapter.deviceClassRequirementMessage(context)
+                else -> null
+            }
+            memoryMessage?.let { return@withContext failure(localSpec.displayName, it) }
+
+            val installedState = LocalModelInstaller.checkInstallationStatus(context, localSpec)
+            if (installedState.status != LocalModelStatus.READY || !installedState.runtimeReady) {
+                val message = installedState.errorMessage ?: installedState.statusDetail
+                    ?: "${localSpec.displayName} is not installed and runtime-validated. Download it in AI Settings first."
+                return@withContext failure(localSpec.displayName, message)
+            }
+
+            val modelDir = LocalModelInstaller.getModelDir(context, localSpec)
+            val runtime = LocalModelRuntimeRegistry.getRuntime(localSpec)
+                ?: return@withContext failure(localSpec.displayName, "No runtime adapter is registered for this local model.")
+            if (!runtime.isReady && !runtime.open(context, modelDir)) {
+                val message = when (runtime) {
+                    is Gemma4RuntimeAdapter -> runtime.lastErrorMessage
+                    is MiniCpmV46RuntimeAdapter -> runtime.lastErrorMessage
+                    else -> null
+                } ?: "The selected local model could not initialize on this device."
+                LocalModelRuntimeRegistry.closeRuntime(localSpec.id)
+                return@withContext failure(localSpec.displayName, message)
+            }
+            val imageRuntime = runtime as? LocalImageTaggingRuntime
+                ?: return@withContext failure(localSpec.displayName, "The selected runtime does not expose image-to-text inference.")
+            val maxDimension = if (localSpec.architecture == ModelArchitecture.MINICPM_V46) 768 else 448
+            val bitmap = loadSampledBitmap(context, Uri.parse(item.uri), maxDimension)
+                ?: return@withContext failure(localSpec.displayName, "The image could not be decoded from the media URI.")
+            try {
+                val imageBytes = ByteArrayOutputStream().use { output ->
+                    bitmap.compress(Bitmap.CompressFormat.JPEG, 85, output)
+                    output.toByteArray()
                 }
-            }
-            return@withContext AiTaggingResult(
-                tags = emptyList(),
-                engineName = "Florence-2",
-                durationMs = durationMs,
-                isSuccess = false,
-                errorMessage = "Florence-2 model is not downloaded. Please download it in AI Settings."
-            )
-        }
-
-        // 2. GEMMA 4 E2B (2 of 4 downloaded on-device models)
-        if (targetModel == AiTaggingSettings.MODEL_GEMMA_4 || targetModel == "gemma_4" || targetModel == "gemma4" || targetModel == "gemma-4") {
-            val isInstalled = FlorenceModelManager.isInstalled(context, AiTaggingSettings.MODEL_GEMMA_4)
-            val durationMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startNs)
-            if (isInstalled) {
-                val tags = tagWithLocalModelSpec(context, item, com.amresalehin.emregallery.ai.local.LocalModelRegistry.GEMMA_4_SPEC)
-                return@withContext AiTaggingResult(
-                    tags = tags,
-                    engineName = "Gemma 4 E2B (On-Device)",
-                    durationMs = durationMs
+                try {
+                    val tags = cleanTagsList(imageRuntime.generateImageTags(imageBytes))
+                    if (tags.isEmpty()) {
+                        return@withContext failure(
+                            localSpec.displayName,
+                            "${localSpec.displayName} returned no usable image tags. No placeholder tags were saved."
+                        )
+                    }
+                    return@withContext AiTaggingResult(
+                        tags = tags,
+                        engineName = "${localSpec.displayName} (On-device)",
+                        durationMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startNs)
+                    )
+                } finally {
+                    imageBytes.fill(0)
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Throwable) {
+                return@withContext failure(
+                    localSpec.displayName,
+                    "Local image inference failed: ${error.message ?: error.javaClass.simpleName}"
                 )
+            } finally {
+                bitmap.recycle()
             }
-            return@withContext AiTaggingResult(
-                tags = emptyList(),
-                engineName = "Gemma 4",
-                durationMs = durationMs,
-                isSuccess = false,
-                errorMessage = "Gemma 4 model is not downloaded. Please download it in AI Settings."
-            )
         }
 
-        // 3. LFM 2.5-VL-450M (3 of 4 downloaded on-device models)
-        if (targetModel == AiTaggingSettings.MODEL_LFM_2_5 || targetModel == "lfm2_5" || targetModel == "lfm2_5_vl" || targetModel == "lfm-2.5") {
-            val isInstalled = FlorenceModelManager.isInstalled(context, AiTaggingSettings.MODEL_LFM_2_5)
-            val durationMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startNs)
-            if (isInstalled) {
-                val tags = tagWithLocalModelSpec(context, item, com.amresalehin.emregallery.ai.local.LocalModelRegistry.LFM2_5_SPEC)
-                return@withContext AiTaggingResult(
-                    tags = tags,
-                    engineName = "LFM2.5-VL (On-Device)",
-                    durationMs = durationMs
-                )
-            }
-            return@withContext AiTaggingResult(
-                tags = emptyList(),
-                engineName = "LFM2.5-VL",
-                durationMs = durationMs,
-                isSuccess = false,
-                errorMessage = "LFM2.5-VL model is not downloaded. Please download it in AI Settings."
-            )
-        }
-
-        // 4. QWEN 3.5 0.8B (4 of 4 downloaded on-device models)
-        if (targetModel == AiTaggingSettings.MODEL_QWEN_3_5 || targetModel == "qwen3_5" || targetModel == "qwen3.5" || targetModel == "qwen-3.5") {
-            val isInstalled = FlorenceModelManager.isInstalled(context, AiTaggingSettings.MODEL_QWEN_3_5)
-            val durationMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startNs)
-            if (isInstalled) {
-                val tags = tagWithLocalModelSpec(context, item, com.amresalehin.emregallery.ai.local.LocalModelRegistry.QWEN3_5_SPEC)
-                return@withContext AiTaggingResult(
-                    tags = tags,
-                    engineName = "Qwen3.5-0.8B (On-Device)",
-                    durationMs = durationMs
-                )
-            }
-            return@withContext AiTaggingResult(
-                tags = emptyList(),
-                engineName = "Qwen3.5-0.8B",
-                durationMs = durationMs,
-                isSuccess = false,
-                errorMessage = "Qwen3.5 model is not downloaded. Please download it in AI Settings."
-            )
-        }
-
-        // 5. CLOUD MODELS (OpenAI, Google Gemini, Groq, Ollama, OpenRouter, etc.)
+        // 5. CLOUD MODELS        // 5. CLOUD MODELS (OpenAI, Google Gemini, Groq, Ollama, OpenRouter, etc.)
         val isExplicitCloud = targetModel == AiTaggingSettings.MODEL_CLOUD ||
                 targetModel.startsWith("cloud_") ||
                 (cloudProvider != null && (targetModel == cloudProvider.id.lowercase() || targetModel == cloudProvider.modelId.lowercase()))
@@ -238,25 +244,9 @@ object AiImageTagger {
             )
         }
 
-        // 6. Default Fallback -> Florence-2 Base
-        val isInstalled = FlorenceModelManager.isInstalled(context, "florence2")
-        val durationMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startNs)
-        if (isInstalled) {
-            val localResult = runCatching { tagWithLocalFlorence(context, item) }.getOrNull()
-            if (localResult != null && localResult.isNotEmpty()) {
-                return@withContext AiTaggingResult(
-                    tags = localResult,
-                    engineName = "Florence-2 On-Device",
-                    durationMs = durationMs
-                )
-            }
-        }
-        return@withContext AiTaggingResult(
-            tags = emptyList(),
-            engineName = "AI Vision",
-            durationMs = durationMs,
-            isSuccess = false,
-            errorMessage = "No model ready. Please download one of the 4 local models or configure Cloud AI in Settings."
+        return@withContext failure(
+            "AI Vision",
+            "No usable local image model or active Cloud AI provider is configured. Select MiniCPM-V 4.6 or Gemma 4, or configure a Cloud AI provider in Settings."
         )
     }
 
@@ -420,63 +410,6 @@ object AiImageTagger {
         }
 
         return@withContext cleanTagsList(content)
-    }
-
-    /**
-     * Tags image using Florence-2 local vision model.
-     */
-    private fun tagWithLocalFlorence(context: Context, item: MediaItem): List<String> {
-        val tags = mutableListOf<String>()
-        tags.add("florence2")
-        tags.add("vision-language")
-        tags.add("detailed caption")
-        tags.add(if (item.isVideo) "video" else "photo")
-        return tags.distinct().take(10)
-    }
-
-    /**
-     * Tags image tailored to specific on-device model spec taxonomy.
-     */
-    fun tagWithLocalModelSpec(
-        context: Context?,
-        item: MediaItem,
-        spec: com.amresalehin.emregallery.ai.local.LocalModelSpec
-    ): List<String> {
-        val tags = mutableListOf<String>()
-        val isInstalled = if (context != null) FlorenceModelManager.isInstalled(context, spec.id) else false
-
-        when (spec.architecture) {
-            com.amresalehin.emregallery.ai.local.ModelArchitecture.GEMMA4 -> {
-                tags.add("gemma4")
-                tags.add("multimodal")
-                tags.add("vision-language")
-                if (item.width > item.height) tags.add("wide")
-                if (isInstalled) tags.add("gemma")
-            }
-            com.amresalehin.emregallery.ai.local.ModelArchitecture.LFM2_5 -> {
-                tags.add("lfm2.5")
-                tags.add("extract")
-                tags.add("structured-vision")
-                if (isInstalled) tags.add("lfm")
-            }
-            com.amresalehin.emregallery.ai.local.ModelArchitecture.QWEN3_5 -> {
-                tags.add("qwen3.5")
-                tags.add("vision-qa")
-                tags.add("multimodal")
-                if (isInstalled) tags.add("qwen")
-            }
-            com.amresalehin.emregallery.ai.local.ModelArchitecture.FLORENCE2 -> {
-                tags.add("florence2")
-                tags.add("vision-language")
-                tags.add("caption")
-                if (isInstalled) tags.add("florence")
-            }
-            else -> {
-                tags.add(spec.id)
-            }
-        }
-        tags.add(if (item.isVideo) "video" else "photo")
-        return tags.distinct().take(10)
     }
 
     /**

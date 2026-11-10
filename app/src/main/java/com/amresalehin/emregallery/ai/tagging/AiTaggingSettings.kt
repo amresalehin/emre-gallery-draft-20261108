@@ -2,10 +2,11 @@ package com.amresalehin.emregallery.ai.tagging
 
 import android.content.Context
 import com.amresalehin.emregallery.face.FaceRecognitionSettings
+import com.amresalehin.emregallery.ai.local.LocalModelRegistry
 
 /**
  * Persistent preferences for AI image tagging:
- * - Active model selection (Florence-2, Gemma 4, LFM2.5-VL, Qwen3.5, or Cloud models)
+ * - Active model selection (MiniCPM-V 4.6, Gemma 4, or Cloud models)
  * - Folder scoping (all folders or selective folder filtering)
  */
 object AiTaggingSettings {
@@ -14,7 +15,7 @@ object AiTaggingSettings {
     const val KEY_ALL_FOLDERS = "all_folders"
     const val KEY_SELECTED_FOLDERS = "selected_folders"
 
-    const val MODEL_FLORENCE_2 = "florence2"
+    const val MODEL_MINI_CPM_V46 = "minicpm_v_4_6"
     const val MODEL_GEMMA_4 = "gemma_4_e2b"
     const val MODEL_LFM_2_5 = "lfm2_5_vl_450m_extract"
     const val MODEL_QWEN_3_5 = "qwen3_5_0_8b"
@@ -25,8 +26,22 @@ object AiTaggingSettings {
 
     fun getSelectedModel(context: Context): String {
         val saved = preferences(context).getString(KEY_SELECTED_MODEL, null)
-        if (saved != null && saved != "smart_vision") return saved
-        return MODEL_FLORENCE_2
+        val previousFlorenceSelection = saved in setOf(
+            "florence2", "florence-2", "florence-2-base", "florence2_base"
+        )
+        if (saved.isNullOrBlank() || saved == "smart_vision" || previousFlorenceSelection) {
+            preferences(context).edit().putString(KEY_SELECTED_MODEL, MODEL_MINI_CPM_V46).apply()
+            return MODEL_MINI_CPM_V46
+        }
+
+        val localSpec = LocalModelRegistry.findSpec(saved)
+        val migrateUnsupportedLocal = (localSpec != null && !localSpec.hasRuntimeAdapter) ||
+            LocalModelRegistry.isRetiredLocalModelId(saved)
+        if (migrateUnsupportedLocal) {
+            preferences(context).edit().putString(KEY_SELECTED_MODEL, MODEL_GEMMA_4).apply()
+            return MODEL_GEMMA_4
+        }
+        return localSpec?.id ?: saved
     }
 
     fun setSelectedModel(context: Context, modelId: String) {
