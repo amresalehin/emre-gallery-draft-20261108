@@ -491,6 +491,36 @@ class AiConfigurationTest {
     }
 
     @Test
+    fun testDownloader416ReportsRemoteSizeMismatchInsteadOfRetryingWithBadManifest() = runBlocking {
+        val targetFile = tempFolder.newFile("range_416_size_mismatch.bin")
+        targetFile.writeText("STALE_PARTIAL_FILE_LONGER_THAN_REMOTE")
+        val remoteBytes = "ACTUAL_REMOTE"
+        val expectedBytes = remoteBytes.toByteArray().size.toLong() + 1024L
+
+        mockWebServer.enqueue(
+            MockResponse()
+                .setResponseCode(416)
+                .setHeader("Content-Range", "bytes */${remoteBytes.toByteArray().size}")
+        )
+
+        try {
+            LocalModelDownloadManager.downloadArtifactFile(
+                url = mockWebServer.url("/range-416-size-mismatch").toString(),
+                destination = targetFile,
+                expectedBytes = expectedBytes,
+                onProgress = {}
+            )
+            fail("Expected the remote size mismatch to be reported")
+        } catch (error: IOException) {
+            assertTrue(error.message.orEmpty().contains("manifest expects"))
+            assertTrue(error.message.orEmpty().contains("server reports"))
+        }
+
+        assertEquals("A rejected stale partial must be cleared", 0L, targetFile.length())
+        assertEquals("A definitive size mismatch must not loop through retries", 1, mockWebServer.requestCount)
+    }
+
+    @Test
     fun testDownloaderCancellation() = runBlocking {
         val targetFile = tempFolder.newFile("cancel_test.bin").apply { delete() }
 
