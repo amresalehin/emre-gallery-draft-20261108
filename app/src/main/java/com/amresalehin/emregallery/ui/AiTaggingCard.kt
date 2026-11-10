@@ -32,9 +32,10 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.amresalehin.emregallery.ai.local.Gemma4RuntimeAdapter
+import com.amresalehin.emregallery.ai.local.MiniCpmV46RuntimeAdapter
 import com.amresalehin.emregallery.ai.tagging.AiTaggingSettings
-import com.amresalehin.emregallery.data.FlorenceModelManager
-import com.amresalehin.emregallery.data.FlorenceStatus
+import com.amresalehin.emregallery.data.LocalModelManager
+import com.amresalehin.emregallery.data.LocalModelStatus
 import com.amresalehin.emregallery.data.PreferencesRepository
 import kotlinx.coroutines.launch
 import java.text.NumberFormat
@@ -75,7 +76,7 @@ fun AiTaggingCard(
 
     val cloudProviders by prefs.cloudProviders.collectAsState(initial = emptyList())
     val activeCloudProvider by prefs.activeCloudProvider.collectAsState(initial = null)
-    val allModelStates by FlorenceModelManager.allModelStates.collectAsState()
+    val allModelStates by LocalModelManager.allModelStates.collectAsState()
 
     // Model selection state
     var selectedModelId by remember {
@@ -95,15 +96,16 @@ fun AiTaggingCard(
         FlorenceModelManager.refreshAllStates(context)
     }
 
-    // Legacy smart_vision now migrates to the working local image model.
-    if (selectedModelId == "smart_vision") {
-        selectedModelId = AiTaggingSettings.MODEL_GEMMA_4
-        AiTaggingSettings.setSelectedModel(context, AiTaggingSettings.MODEL_GEMMA_4)
+    // Legacy smart_vision and Florence selections now migrate to MiniCPM-V 4.6.
+    if (selectedModelId == "smart_vision" || selectedModelId.startsWith("florence")) {
+        selectedModelId = AiTaggingSettings.MODEL_MINI_CPM_V46
+        AiTaggingSettings.setSelectedModel(context, AiTaggingSettings.MODEL_MINI_CPM_V46)
     }
 
     // Only offer local models that implement actual image-to-text inference.
     val availableModels = remember(activeCloudProvider, cloudProviders) {
         val models = mutableListOf(
+            TaggingModelOption(AiTaggingSettings.MODEL_MINI_CPM_V46, "MiniCPM-V 4.6 (1.3B)", isLocalAiModel = true),
             TaggingModelOption(AiTaggingSettings.MODEL_GEMMA_4, "Gemma 4 E2B", isLocalAiModel = true)
         )
         cloudProviders.forEach { provider ->
@@ -245,9 +247,8 @@ fun AiTaggingCard(
                                 !isModelInstalled -> {
                                     scope.launch {
                                         val modelName = availableModels.firstOrNull { it.id == selectedModelId }?.displayName ?: selectedModelId
-                                        val memoryError = Gemma4RuntimeAdapter.deviceClassRequirementMessage(context)
-                                        if (selectedModelId == AiTaggingSettings.MODEL_GEMMA_4 && memoryError != null) {
-                                            onShowSnackbar?.invoke(memoryError)
+                                        if (selectedModelMemoryError != null) {
+                                            onShowSnackbar?.invoke(selectedModelMemoryError)
                                         } else {
                                             onShowSnackbar?.invoke("Downloading $modelName model...")
                                             val ok = FlorenceModelManager.downloadAndInstallModel(context, selectedModelId)
@@ -263,9 +264,8 @@ fun AiTaggingCard(
                                 isRunning -> onStopTagging()
                                 isCompleted -> showActionMenu = true
                                 else -> {
-                                    val memoryError = Gemma4RuntimeAdapter.deviceClassRequirementMessage(context)
-                                    if (selectedModelId == AiTaggingSettings.MODEL_GEMMA_4 && memoryError != null) {
-                                        onShowSnackbar?.invoke(memoryError)
+                                    if (selectedModelMemoryError != null) {
+                                        onShowSnackbar?.invoke(selectedModelMemoryError)
                                     } else {
                                         triggerTagging(false)
                                     }
