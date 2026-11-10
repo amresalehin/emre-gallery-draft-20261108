@@ -213,8 +213,8 @@ Java_com_amresalehin_emregallery_ai_local_MiniCpmV46Native_generateImage(
         return nullptr;
     }
 
-    std::string prompt = "<|im_start|>user\\n" + instruction + "<|im_end|>\\n";
-    prompt += "<|im_start|>assistant\\n<think>\\n\\n</think>\\n\\n";
+    std::string prompt = "<|im_start|>user\n" + instruction + "<|im_end|>\n";
+    prompt += "<|im_start|>assistant\n<think>\n\n</think>\n\n";
     mtmd_input_text text_input = { prompt.c_str(), false, true };
     mtmd_input_chunks * text_chunks = mtmd_input_chunks_init();
     const int32_t text_tokenize_result =
