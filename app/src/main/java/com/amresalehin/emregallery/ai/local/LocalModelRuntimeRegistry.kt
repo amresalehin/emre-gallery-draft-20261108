@@ -22,6 +22,13 @@ object LocalModelRuntimeRegistry {
             override fun createRuntime(spec: LocalModelSpec): LocalModelRuntime =
                 MiniCpmV46RuntimeAdapter(spec)
         })
+
+        register(object : LocalModelRuntimeFactory {
+            override fun isApplicable(spec: LocalModelSpec): Boolean =
+                spec.architecture == ModelArchitecture.LFM2_5
+            override fun createRuntime(spec: LocalModelSpec): LocalModelRuntime =
+                Lfm25VlRuntimeAdapter(spec)
+        })
     }
 
     @Synchronized
