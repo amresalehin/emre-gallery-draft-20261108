@@ -31,13 +31,13 @@ void set_error(const std::string & message) {
 }
 
 void release_model_locked() {
-    if (g_context) {
-        llama_free(g_context);
-        g_context = nullptr;
-    }
     if (g_vision) {
         mtmd_free(g_vision);
         g_vision = nullptr;
+    }
+    if (g_context) {
+        llama_free(g_context);
+        g_context = nullptr;
     }
     if (g_model) {
         llama_model_free(g_model);
