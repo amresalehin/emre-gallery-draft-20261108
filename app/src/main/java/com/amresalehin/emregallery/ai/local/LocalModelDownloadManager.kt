@@ -43,6 +43,7 @@ object LocalModelDownloadManager {
         destination: File,
         expectedBytes: Long? = null,
         expectedSha256: String? = null,
+        expectedMd5: String? = null,
         onProgress: (bytesReadThisSession: Long) -> Unit,
         onStage: (stage: String) -> Unit = {}
     ): Unit = withContext(Dispatchers.IO) {
@@ -55,9 +56,9 @@ object LocalModelDownloadManager {
         }
 
         if (destination.isFile && expectedBytes != null && destination.length() == expectedBytes) {
-            if (expectedSha256.isNullOrBlank() ||
-                sha256(destination).equals(expectedSha256, ignoreCase = true)
-            ) {
+            val shaOk = expectedSha256.isNullOrBlank() || sha256(destination).equals(expectedSha256, ignoreCase = true)
+            val md5Ok = expectedMd5.isNullOrBlank() || md5(destination).equals(expectedMd5, ignoreCase = true)
+            if (shaOk && md5Ok) {
                 onProgress(0L)
                 return@withContext
             }
@@ -154,11 +155,13 @@ object LocalModelDownloadManager {
                     throw IOException("Downloaded size mismatch. Expected " + expectedBytes +
                         " bytes, received " + destination.length())
                 }
-                if (!expectedSha256.isNullOrBlank() &&
-                    !sha256(destination).equals(expectedSha256, ignoreCase = true)
-                ) {
+                if (!expectedSha256.isNullOrBlank() && !sha256(destination).equals(expectedSha256, ignoreCase = true)) {
                     destination.delete()
                     throw IOException("SHA-256 mismatch for downloaded artifact: " + url)
+                }
+                if (!expectedMd5.isNullOrBlank() && !md5(destination).equals(expectedMd5, ignoreCase = true)) {
+                    destination.delete()
+                    throw IOException("MD5 mismatch for downloaded artifact: " + url)
                 }
                 onStage("complete")
                 return@withContext
@@ -230,6 +233,19 @@ object LocalModelDownloadManager {
         if (header.isNullOrBlank()) return null
         return Regex("^bytes\\s+\\*/(\\d+)$", RegexOption.IGNORE_CASE)
             .matchEntire(header.trim())?.groupValues?.get(1)?.toLongOrNull()
+    }
+
+    private fun md5(file: File): String {
+        val digest = MessageDigest.getInstance("MD5")
+        file.inputStream().buffered(BUFFER_SIZE).use { input ->
+            val buffer = ByteArray(BUFFER_SIZE)
+            while (true) {
+                val count = input.read(buffer)
+                if (count < 0) break
+                digest.update(buffer, 0, count)
+            }
+        }
+        return digest.digest().joinToString("") { "%02x".format(it) }
     }
 
     private fun sha256(file: File): String {
