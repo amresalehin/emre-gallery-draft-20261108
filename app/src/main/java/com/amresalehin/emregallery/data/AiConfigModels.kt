@@ -34,7 +34,7 @@ data class CloudTestResult(
  * Represents the comprehensive installation, verification, and runtime readiness state
  * of local on-device AI models.
  */
-enum class FlorenceStatus {
+enum class LocalModelStatus {
     NOT_INSTALLED,
     QUEUED,
     DOWNLOADING,
@@ -50,7 +50,7 @@ enum class FlorenceStatus {
     val isUsable: Boolean get() = this == READY || this == INSTALLED
 }
 
-data class FlorenceModelState(
+data class LocalModelState(
     val status: FlorenceStatus = FlorenceStatus.NOT_INSTALLED,
     val progress: Float = 0f,
     val bytesDownloaded: Long = 0L,
