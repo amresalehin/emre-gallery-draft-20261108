@@ -2,6 +2,7 @@ package com.amresalehin.emregallery.ai.tagging
 
 import android.content.Context
 import com.amresalehin.emregallery.face.FaceRecognitionSettings
+import com.amresalehin.emregallery.ai.local.LocalModelRegistry
 
 /**
  * Persistent preferences for AI image tagging:
@@ -25,8 +26,17 @@ object AiTaggingSettings {
 
     fun getSelectedModel(context: Context): String {
         val saved = preferences(context).getString(KEY_SELECTED_MODEL, null)
-        if (saved != null && saved != "smart_vision") return saved
-        return MODEL_FLORENCE_2
+        val localSpec = saved?.let { LocalModelRegistry.findSpec(it) }
+        val migrateToGemma = saved.isNullOrBlank() ||
+            saved == "smart_vision" ||
+            (localSpec != null && !localSpec.hasRuntimeAdapter) ||
+            (saved != null && LocalModelRegistry.isRetiredLocalModelId(saved))
+
+        if (migrateToGemma) {
+            preferences(context).edit().putString(KEY_SELECTED_MODEL, MODEL_GEMMA_4).apply()
+            return MODEL_GEMMA_4
+        }
+        return localSpec?.id ?: saved.orEmpty()
     }
 
     fun setSelectedModel(context: Context, modelId: String) {
