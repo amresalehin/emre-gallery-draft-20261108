@@ -1,26 +1,27 @@
 package com.amresalehin.emregallery.data
 
+import com.amresalehin.emregallery.ai.tagging.AiImageTagger
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import okhttp3.OkHttpClient
-import okhttp3.Request
+import java.net.ConnectException
+import java.net.SocketTimeoutException
+import java.net.UnknownHostException
+import java.util.Base64
 import java.util.concurrent.TimeUnit
 
 object CloudAiConnectionTester {
 
-    private val httpClient: OkHttpClient by lazy {
-        OkHttpClient.Builder()
-            .connectTimeout(6, TimeUnit.SECONDS)
-            .readTimeout(6, TimeUnit.SECONDS)
-            .writeTimeout(6, TimeUnit.SECONDS)
-            .followRedirects(true)
-            .build()
+    // Small valid JPEG used to verify authentication, endpoint routing, and actual vision inference.
+    private val smokeTestImage: ByteArray by lazy {
+        Base64.getDecoder().decode(
+            "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDABALDA4MChAODQ4SERATGCgaGBYWGDEjJR0oOjM9PDkzODdASFxOZ2P/wAARCAAIAAgDASIAAhEBAxEB/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd3eHl6goOEhYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0tba3uLm6wsPExcbHyMnK0tPU1dbX2Nna4uPk5ebn6Onq8vP09fb3+Pn6/9oADAMBAAIRAxEAPwDs6KKKAP/Z"
+        )
     }
 
     suspend fun testConnection(provider: CloudAiProvider): CloudTestResult = withContext(Dispatchers.IO) {
         val startNs = System.nanoTime()
-        val rawBase = provider.baseUrl.trim()
-        if (rawBase.isBlank()) {
+        if (provider.baseUrl.isBlank()) {
             return@withContext CloudTestResult(
                 status = CloudProviderStatus.ERROR,
                 message = "Base URL cannot be blank",
@@ -28,86 +29,30 @@ object CloudAiConnectionTester {
             )
         }
 
-        val normalizedBase = when {
-            rawBase.startsWith("http://", ignoreCase = true) || rawBase.startsWith("https://", ignoreCase = true) -> rawBase
-            else -> "https://$rawBase"
-        }.trimEnd('/')
-
-        // Typical test endpoints: /models or /v1/models or root endpoint
-        val testUrl = if (normalizedBase.endsWith("/v1", ignoreCase = true)) {
-            "$normalizedBase/models"
-        } else {
-            "$normalizedBase/v1/models"
-        }
-
         try {
-            val requestBuilder = Request.Builder()
-                .url(testUrl)
-                .get()
-
-            if (provider.apiKey.isNotBlank()) {
-                requestBuilder.header("Authorization", "Bearer ${provider.apiKey.trim()}")
+            val tags = AiImageTagger.tagWithCloudVisionDirect(provider, smokeTestImage)
+            if (tags.isEmpty()) {
+                throw IllegalStateException("The model accepted the request but returned no usable image tags.")
             }
-
-            val response = try {
-                httpClient.newCall(requestBuilder.build()).execute()
-            } catch (e: Exception) {
-                // If /models failed, fallback test to root url (common for Ollama or custom gateways)
-                val fallbackReq = Request.Builder()
-                    .url(normalizedBase)
-                    .get()
-                if (provider.apiKey.isNotBlank()) {
-                    fallbackReq.header("Authorization", "Bearer ${provider.apiKey.trim()}")
-                }
-                httpClient.newCall(fallbackReq.build()).execute()
-            }
-
             val elapsedMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startNs).coerceAtLeast(1L)
-            val code = response.code
-            response.close()
-
-            when (code) {
-                in 200..299 -> {
-                    CloudTestResult(
-                        status = CloudProviderStatus.CONNECTED,
-                        message = "Connected (HTTP $code • ${elapsedMs}ms)",
-                        latencyMs = elapsedMs
-                    )
-                }
-                401, 403 -> {
-                    CloudTestResult(
-                        status = CloudProviderStatus.ERROR,
-                        message = "Unauthorized (HTTP $code) — check API key",
-                        latencyMs = elapsedMs
-                    )
-                }
-                404 -> {
-                    // Endpoint reached but /models not found. If response is from host, the server is still alive
-                    CloudTestResult(
-                        status = CloudProviderStatus.CONNECTED,
-                        message = "Host reachable (HTTP 404 • ${elapsedMs}ms)",
-                        latencyMs = elapsedMs
-                    )
-                }
-                else -> {
-                    CloudTestResult(
-                        status = CloudProviderStatus.ERROR,
-                        message = "Server response: HTTP $code (${elapsedMs}ms)",
-                        latencyMs = elapsedMs
-                    )
-                }
-            }
-        } catch (e: Exception) {
+            CloudTestResult(
+                status = CloudProviderStatus.CONNECTED,
+                message = "Vision ready • ${elapsedMs}ms • ${tags.size} tags",
+                latencyMs = elapsedMs
+            )
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: Exception) {
             val elapsedMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startNs).coerceAtLeast(1L)
-            val errorMsg = when {
-                e is java.net.UnknownHostException -> "Unknown host. Check Base URL."
-                e is java.net.SocketTimeoutException -> "Connection timed out."
-                e is java.net.ConnectException -> "Connection refused. Is server running?"
-                else -> e.localizedMessage ?: "Connection failed"
+            val message = when (error) {
+                is UnknownHostException -> "Unknown host. Check the provider Base URL."
+                is SocketTimeoutException -> "Cloud vision test timed out. Check connectivity or try again."
+                is ConnectException -> "Connection refused. Check the server address and whether the service is running."
+                else -> error.message ?: "Cloud vision test failed."
             }
             CloudTestResult(
                 status = CloudProviderStatus.ERROR,
-                message = errorMsg,
+                message = message,
                 latencyMs = elapsedMs
             )
         }
