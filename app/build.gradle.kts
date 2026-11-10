@@ -29,8 +29,6 @@ android {
                     "-DLLAMA_BUILD_TESTS=OFF",
                     "-DLLAMA_BUILD_EXAMPLES=OFF",
                     "-DLLAMA_BUILD_SERVER=OFF",
-                    "-DLLAMA_BUILD_APP=OFF",
-                    "-DLLAMA_BUILD_MTMD=ON",
                     "-DLLAMA_OPENSSL=OFF",
                     "-DGGML_OPENMP=OFF",
                     "-DGGML_NATIVE=OFF",
