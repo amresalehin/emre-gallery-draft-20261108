@@ -135,7 +135,7 @@ class AiImageTaggerTest {
             MockResponse()
                 .setResponseCode(401)
                 .setHeader("Content-Type", "application/json")
-                .setBody("{\\\"error\\\": {\\\"message\\\": \\\"Invalid API key\\\"}}")
+                .setBody("""{"error": {"message": "Invalid API key"}}""")
         )
 
         val baseUrl = mockWebServer.url("/v1/").toString()
