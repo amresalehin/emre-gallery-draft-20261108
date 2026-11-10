@@ -49,6 +49,19 @@ object LocalModelInstaller {
         return getBackupDir(context.filesDir, spec)
     }
 
+    fun computeMd5(file: File): String {
+        val digest = MessageDigest.getInstance("MD5")
+        file.inputStream().buffered(64 * 1024).use { input ->
+            val buffer = ByteArray(64 * 1024)
+            while (true) {
+                val count = input.read(buffer)
+                if (count < 0) break
+                digest.update(buffer, 0, count)
+            }
+        }
+        return digest.digest().joinToString("") { "%02x".format(it) }
+    }
+
     fun computeSha256(file: File): String {
         val digest = MessageDigest.getInstance("SHA-256")
         file.inputStream().buffered(64 * 1024).use { input ->
@@ -142,6 +155,15 @@ object LocalModelInstaller {
                     return FlorenceModelState(
                         status = FlorenceStatus.ERROR,
                         errorMessage = "Artifact " + artifact.relativePath + " failed SHA-256 validation."
+                    )
+                }
+            }
+            if (!artifact.md5Hex.isNullOrBlank()) {
+                val actualHash = runCatching { computeMd5(file) }.getOrNull()
+                if (actualHash == null || !actualHash.equals(artifact.md5Hex, ignoreCase = true)) {
+                    return FlorenceModelState(
+                        status = FlorenceStatus.ERROR,
+                        errorMessage = "Artifact " + artifact.relativePath + " failed MD5 validation."
                     )
                 }
             }
@@ -318,6 +340,7 @@ object LocalModelInstaller {
                     destination = stagingFile,
                     expectedBytes = artifact.exactBytes,
                     expectedSha256 = artifact.sha256Hex,
+                    expectedMd5 = artifact.md5Hex,
                     onProgress = { _ ->
                         artifactBytesSoFar = stagingFile.length()
                         val currentCumulative = totalBytesDownloaded + stagingFile.length()
@@ -367,7 +390,14 @@ object LocalModelInstaller {
                     val computed = computeSha256(stagingFile)
                     if (!computed.equals(artifact.sha256Hex, ignoreCase = true)) {
                         stagingFile.delete()
-                        throw IOException("Cryptographic checksum mismatch for ${artifact.relativePath}: expected ${artifact.sha256Hex}, got $computed")
+                        throw IOException("SHA-256 checksum mismatch for ${artifact.relativePath}: expected ${artifact.sha256Hex}, got $computed")
+                    }
+                }
+                if (!artifact.md5Hex.isNullOrBlank()) {
+                    val computed = computeMd5(stagingFile)
+                    if (!computed.equals(artifact.md5Hex, ignoreCase = true)) {
+                        stagingFile.delete()
+                        throw IOException("MD5 checksum mismatch for ${artifact.relativePath}: expected ${artifact.md5Hex}, got $computed")
                     }
                 }
 
@@ -398,6 +428,11 @@ object LocalModelInstaller {
                     !computeSha256(f).equals(artifact.sha256Hex, ignoreCase = true)
                 ) {
                     throw IOException("Verification failed: SHA-256 mismatch for " + artifact.relativePath)
+                }
+                if (!artifact.md5Hex.isNullOrBlank() &&
+                    !computeMd5(f).equals(artifact.md5Hex, ignoreCase = true)
+                ) {
+                    throw IOException("Verification failed: MD5 mismatch for " + artifact.relativePath)
                 }
             }
 
@@ -487,6 +522,8 @@ object LocalModelInstaller {
                         put("path", art.relativePath)
                         put("bytes", File(modelDir, art.relativePath).length())
                         put("role", art.role.name)
+                        if (!art.md5Hex.isNullOrBlank()) put("md5", art.md5Hex)
+                        if (!art.sha256Hex.isNullOrBlank()) put("sha256", art.sha256Hex)
                         if (art.externalDataFor != null) {
                             put("externalDataFor", art.externalDataFor)
                         }
