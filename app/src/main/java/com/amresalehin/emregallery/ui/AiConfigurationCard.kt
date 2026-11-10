@@ -66,7 +66,7 @@ fun AiConfigurationCard(
 
     val cloudProviders by prefs.cloudProviders.collectAsState(initial = emptyList())
     val activeProvider by prefs.activeCloudProvider.collectAsState(initial = null)
-    val localModelState by prefs.florenceModelState.collectAsState(initial = LocalModelState())
+    val localModelState by prefs.localModelState.collectAsState(initial = LocalModelState())
     val allModelStates by LocalModelManager.allModelStates.collectAsState()
 
     var isExpanded by remember { mutableStateOf(initiallyExpanded) }
