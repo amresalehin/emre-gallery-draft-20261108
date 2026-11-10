@@ -155,21 +155,6 @@ fun SettingsScreen(
         "buffalo".contains(query, ignoreCase = true) ||
         "ente".contains(query, ignoreCase = true)
 
-    val matchesAi = query.isBlank() ||
-        "ai configuration".contains(query, ignoreCase = true) ||
-        "cloud".contains(query, ignoreCase = true) ||
-        "local".contains(query, ignoreCase = true) ||
-        "florence".contains(query, ignoreCase = true) ||
-        "model".contains(query, ignoreCase = true) ||
-        "provider".contains(query, ignoreCase = true)
-
-    val matchesTagging = query.isBlank() ||
-        "tag".contains(query, ignoreCase = true) ||
-        "tagging".contains(query, ignoreCase = true) ||
-        "ai tagging".contains(query, ignoreCase = true) ||
-        "labels".contains(query, ignoreCase = true) ||
-        "florence".contains(query, ignoreCase = true)
-
     val matchesGeoTimeline = query.isBlank() ||
         "geo timeline".contains(query, ignoreCase = true) ||
         "timeline".contains(query, ignoreCase = true) ||
@@ -324,45 +309,7 @@ fun SettingsScreen(
                 }
             }
 
-            // 4. AI IMAGE TAGGING CARD (Separate card with Face card design & UX)
-            if (matchesTagging) {
-                item(key = "ai_tagging_card") {
-                    AiTaggingCard(
-                        totalPhotos = uiState.totalPhotos,
-                        taggingState = uiState.aiTagging,
-                        prefs = actualPrefs,
-                        countsReady = uiState.countsReady,
-                        cardBackground = cardBackground,
-                        cardBorder = cardBorder,
-                        numberFormat = numberFormat,
-                        availableFolders = availableFolders,
-                        onStartTagging = { rescanAll ->
-                            indexingViewModel.startAiTagging(rescanAll = rescanAll)
-                        },
-                        onStartTaggingWithScope = { rescanAll, modelId, folders ->
-                            indexingViewModel.startAiTagging(rescanAll = rescanAll, modelId = modelId, folders = folders)
-                        },
-                        onStopTagging = {
-                            indexingViewModel.stopAiTagging()
-                        },
-                        initiallyExpanded = query.isNotBlank() && matchesTagging,
-                        onShowSnackbar = onShowSnackbar
-                    )
-                }
-            }
-
-            // 5. AI CONFIGURATION CARD
-            if (matchesAi) {
-                item(key = "ai_configuration_card") {
-                    AiConfigurationCard(
-                        prefs = actualPrefs,
-                        onShowSnackbar = onShowSnackbar,
-                        initiallyExpanded = query.isNotBlank() && matchesAi
-                    )
-                }
-            }
-
-            // 6. GEO TIMELINE CARD
+            // 4. GEO TIMELINE CARD
             if (matchesGeoTimeline) {
                 item(key = "geo_timeline_card") {
                     GeoTimelineCard(
@@ -389,7 +336,7 @@ fun SettingsScreen(
             }
 
             // Empty search state
-            if (!matchesTheme && !matchesOcr && !matchesFace && !matchesTagging && !matchesAi && !matchesGeoTimeline && otherEntries.isEmpty() && query.isNotBlank()) {
+            if (!matchesTheme && !matchesOcr && !matchesFace && !matchesGeoTimeline && otherEntries.isEmpty() && query.isNotBlank()) {
                 item {
                     Box(
                         modifier = Modifier

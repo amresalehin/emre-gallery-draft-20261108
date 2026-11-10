@@ -4,7 +4,6 @@ import android.content.Context
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.preferencesDataStore
-import com.amresalehin.emregallery.data.preferences.AiPreferencesManager
 import com.amresalehin.emregallery.data.preferences.MediaCollectionsPreferencesManager
 import com.amresalehin.emregallery.data.preferences.OcrPreferencesManager
 import com.amresalehin.emregallery.data.preferences.UiPreferencesManager
@@ -19,7 +18,6 @@ val Context.galleryDataStore: DataStore<Preferences> by preferencesDataStore(nam
  * - [vaultPrefs]: Security, locked folder PIN hash, and biometrics
  * - [ocrPrefs]: OCR models, languages, and engines
  * - [mediaPrefs]: Albums, tags, people, favorites, trash bin, archive, and search history
- * - [aiPrefs]: Cloud AI providers, active models, and local model status
  */
 class PreferencesRepository(context: Context) {
 
@@ -27,7 +25,6 @@ class PreferencesRepository(context: Context) {
     private val vaultPrefs = VaultPreferencesManager(context)
     private val ocrPrefs = OcrPreferencesManager(context)
     private val mediaPrefs = MediaCollectionsPreferencesManager(context)
-    private val aiPrefs = AiPreferencesManager(context)
     val geotagPrefs = com.amresalehin.emregallery.data.preferences.GeotagPreferencesManager(context)
 
     // --- Onboarding & UI Navigation ---
@@ -105,15 +102,4 @@ class PreferencesRepository(context: Context) {
     suspend fun addTagsForMedia(uri: String, tags: Collection<String>) = mediaPrefs.addTagsForMedia(uri, tags)
     suspend fun removeTagForMedia(uri: String, tag: String) = mediaPrefs.removeTagForMedia(uri, tag)
     suspend fun addPersonForMedia(uri: String, person: String) = mediaPrefs.addPersonForMedia(uri, person)
-
-    // --- AI Configuration & Models ---
-    val cloudProviders: Flow<List<com.amresalehin.emregallery.data.CloudAiProvider>> get() = aiPrefs.cloudProviders
-    val activeCloudProvider: Flow<com.amresalehin.emregallery.data.CloudAiProvider?> get() = aiPrefs.activeProvider
-    val localModelState: Flow<com.amresalehin.emregallery.data.LocalModelState> get() = aiPrefs.localModelState
-
-    suspend fun saveCloudProvider(provider: com.amresalehin.emregallery.data.CloudAiProvider) = aiPrefs.saveProvider(provider)
-    suspend fun setActiveCloudProvider(providerId: String) = aiPrefs.setActiveProvider(providerId)
-    suspend fun deleteCloudProvider(providerId: String) = aiPrefs.deleteProvider(providerId)
-    suspend fun testCloudProvider(providerId: String): com.amresalehin.emregallery.data.CloudProviderStatus = aiPrefs.testProvider(providerId)
-    suspend fun testActiveCloudProvider(): com.amresalehin.emregallery.data.CloudProviderStatus = aiPrefs.testActiveProvider()
 }

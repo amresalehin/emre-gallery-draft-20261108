@@ -81,8 +81,6 @@ class IndexingStatusViewModel(application: Application) : AndroidViewModel(appli
     private var enteFaceStartProcessed: Int = 0
     private var locationStartTimeMillis: Long = 0L
     private var locationStartProcessed: Int = 0
-    private var aiTaggingStartTimeMillis: Long = 0L
-    private var aiTaggingStartProcessed: Int = 0
 
     init {
         updateEngineState()
@@ -318,7 +316,6 @@ class IndexingStatusViewModel(application: Application) : AndroidViewModel(appli
                     var newFace = state.faceFinding
                     var newEnteFace = state.enteFaceFinding
                     var newLocation = state.location
-                    var newAiTagging = state.aiTagging
                     var newDownload = state.modelDownload
                     var newEnteDownload = state.enteModelDownload
 
@@ -332,19 +329,6 @@ class IndexingStatusViewModel(application: Application) : AndroidViewModel(appli
                                 isPaused = paused,
                                 processed = if (total > 0) processed else newOcr.processed,
                                 itemsPerMinute = ipm
-                            )
-                        }
-                        "ai_tagging" -> {
-                            val ipm = if (running && !paused) {
-                                calculateRate(processed - aiTaggingStartProcessed, aiTaggingStartTimeMillis)
-                            } else 0
-                            newAiTagging = newAiTagging.copy(
-                                isRunning = running,
-                                isPaused = paused,
-                                processed = if (total > 0) processed else newAiTagging.processed,
-                                itemsPerMinute = ipm,
-                                currentItemName = currentItem,
-                                currentItemStatus = currentStatus
                             )
                         }
                         "face" -> {
@@ -444,7 +428,6 @@ class IndexingStatusViewModel(application: Application) : AndroidViewModel(appli
                         newFace = newFace.copy(isRunning = false, isPaused = false, itemsPerMinute = 0, currentItemName = "")
                         newEnteFace = newEnteFace.copy(isRunning = false, isPaused = false, itemsPerMinute = 0, currentItemName = "")
                         newLocation = newLocation.copy(isRunning = false, isPaused = false, itemsPerMinute = 0)
-                        newAiTagging = newAiTagging.copy(isRunning = false, isPaused = false, itemsPerMinute = 0, currentItemName = "")
                         newDownload = newDownload.copy(isDownloading = false, isPaused = false)
                         newEnteDownload = newEnteDownload.copy(isDownloading = false, isPaused = false)
                     }
@@ -454,7 +437,6 @@ class IndexingStatusViewModel(application: Application) : AndroidViewModel(appli
                         faceFinding = newFace,
                         enteFaceFinding = newEnteFace,
                         location = newLocation,
-                        aiTagging = newAiTagging,
                         modelDownload = newDownload,
                         enteModelDownload = newEnteDownload
                     )
@@ -1009,27 +991,5 @@ class IndexingStatusViewModel(application: Application) : AndroidViewModel(appli
             engineId = currentOcrEngine,
             mlKitLanguages = currentMlKitLanguages.toList()
         )
-    }
-
-    fun startAiTagging(
-        rescanAll: Boolean = false,
-        modelId: String? = null,
-        folders: Set<String>? = null
-    ) {
-        val state = _uiState.value
-        if (state.ocr.isRunning || state.faceFinding.isRunning || state.enteFaceFinding.isRunning ||
-            state.location.isRunning || state.aiTagging.isRunning ||
-            state.modelDownload.isDownloading || state.enteModelDownload.isDownloading
-        ) return
-
-        aiTaggingStartTimeMillis = System.currentTimeMillis()
-        aiTaggingStartProcessed = if (rescanAll) 0 else state.aiTagging.processed
-        _uiState.update { it.copy(aiTagging = it.aiTagging.copy(isRunning = true, isPaused = false, processed = aiTaggingStartProcessed)) }
-        IndexingForegroundService.startAiTagging(context, rescanAll = rescanAll, modelId = modelId, folders = folders)
-    }
-
-    fun stopAiTagging() {
-        IndexingForegroundService.cancel(context)
-        _uiState.update { it.copy(aiTagging = it.aiTagging.copy(isRunning = false, isPaused = false)) }
     }
 }

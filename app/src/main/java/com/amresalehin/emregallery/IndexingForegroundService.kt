@@ -99,7 +99,6 @@ class IndexingForegroundService : Service() {
             ACTION_START_FACE -> "Face indexing"
             ACTION_START_LOCATION -> "Map location indexing"
             ACTION_DOWNLOAD_MODEL -> "Downloading face model"
-            ACTION_START_AI_TAGGING -> "AI image tagging"
             else -> "Media indexing"
         }
         startForegroundCompat(buildNotification(title, "Starting…", 0, 0))
@@ -127,12 +126,6 @@ class IndexingForegroundService : Service() {
                     ACTION_DOWNLOAD_MODEL -> downloadModel(
                         intent?.getBooleanExtra(EXTRA_FORCE, false) == true,
                         intent?.getStringExtra(EXTRA_ENGINE_ID) ?: BuffaloLFaceEngine.ENGINE_ID
-                    )
-                    ACTION_START_AI_TAGGING -> runAiTagging(
-                        rescanAll = intent?.getBooleanExtra(EXTRA_RESCAN_ALL, false) == true,
-                        modelId = intent?.getStringExtra(EXTRA_AI_MODEL) ?: intent?.getStringExtra(EXTRA_MODEL),
-                        folderFilter = intent?.getStringArrayListExtra(EXTRA_TAGGING_FOLDERS)?.toSet()
-                            ?: intent?.getStringArrayListExtra(EXTRA_FOLDERS)?.toSet()
                     )
                 }
                 prefs.edit().putBoolean(KEY_PAUSED, false).apply()
@@ -503,66 +496,12 @@ class IndexingForegroundService : Service() {
         }
     }
 
-    private suspend fun runAiTagging(
-        rescanAll: Boolean,
-        modelId: String? = null,
-        folderFilter: Set<String>? = null
-    ) {
-        runCatching { android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND) }
-        val allPhotos = loadPhotos()
-        val isAll = if (folderFilter != null) folderFilter.isEmpty() else com.amresalehin.emregallery.ai.tagging.AiTaggingSettings.isAllFolders(applicationContext)
-        val selectedFolders = folderFilter ?: if (!isAll) com.amresalehin.emregallery.ai.tagging.AiTaggingSettings.getSelectedFolders(applicationContext) else emptySet()
-        val photos = if (!isAll && selectedFolders.isNotEmpty()) {
-            allPhotos.filter { com.amresalehin.emregallery.face.FaceRecognitionSettings.normalizeFolderPath(it.relativePath) in selectedFolders }
-        } else {
-            allPhotos
-        }
-        val prefsRepo = PreferencesRepository(this@IndexingForegroundService)
-        val tagsMap = prefsRepo.customTagsMap.first()
-        val pending = if (rescanAll) photos else photos.filter { (tagsMap[it.uri] ?: emptySet()).isEmpty() }
-        val doneCount = photos.size - pending.size
-        val initialPaused = prefs.getBoolean(KEY_PAUSED, false)
-        pauseSignal.value = initialPaused
-        updateState(task = TASK_AI_TAGGING, running = true, paused = initialPaused, processed = doneCount, total = photos.size, error = null)
-        postProgress("AI image tagging", "Scanning ${pending.size} photos with AI vision", doneCount, photos.size)
-        var completed = doneCount
-        val effectiveModel = modelId ?: com.amresalehin.emregallery.ai.tagging.AiTaggingSettings.getSelectedModel(applicationContext)
-        try {
-        for (item in pending) {
-            awaitResume()
-            val result = com.amresalehin.emregallery.ai.tagging.AiImageTagger.tagAndSave(
-                context = this@IndexingForegroundService,
-                item = item,
-                prefs = prefsRepo,
-                preferredModel = effectiveModel
-            )
-            completed++
-            updateState(
-                task = TASK_AI_TAGGING,
-                running = true,
-                paused = false,
-                processed = completed,
-                total = photos.size,
-                currentItemName = item.name,
-                currentItemStatus = if (result.tags.isNotEmpty()) result.tags.joinToString(", ") else (result.errorMessage ?: "No tags generated")
-            )
-            if (completed % 5 == 0 || completed == photos.size) {
-                postProgress("AI image tagging", "${item.name} ($completed/${photos.size})", completed, photos.size)
-            }
-            kotlinx.coroutines.yield()
-        }
-        } finally {
-            com.amresalehin.emregallery.ai.local.LocalModelRuntimeRegistry.closeRuntime(effectiveModel)
-        }
-    }
-
     private fun refreshNotification(message: String) {
         val title = when (prefs.getString(KEY_TASK, "")) {
             TASK_OCR -> "OCR indexing"
             TASK_FACE -> "Face indexing"
             TASK_LOCATION -> "Map location indexing"
             TASK_MODEL -> "Downloading face model"
-            TASK_AI_TAGGING -> "AI image tagging"
             else -> "Media indexing"
         }
         val p = prefs.getInt(KEY_PROCESSED, 0)
@@ -625,7 +564,6 @@ class IndexingForegroundService : Service() {
         const val KEY_PHOTOS_WITH_FACES = "photos_with_faces"
 
         const val TASK_LOCATION = "location"
-        const val TASK_AI_TAGGING = "ai_tagging"
         private const val TASK_OCR = "ocr"
         private const val TASK_FACE = "face"
         private const val TASK_MODEL = "model"
@@ -634,7 +572,6 @@ class IndexingForegroundService : Service() {
         private const val ACTION_START_OCR = "com.amresalehin.emregallery.indexing.START_OCR"
         private const val ACTION_START_FACE = "com.amresalehin.emregallery.indexing.START_FACE"
         private const val ACTION_START_LOCATION = "com.amresalehin.emregallery.indexing.START_LOCATION"
-        private const val ACTION_START_AI_TAGGING = "com.amresalehin.emregallery.indexing.START_AI_TAGGING"
         private const val ACTION_DOWNLOAD_MODEL = "com.amresalehin.emregallery.indexing.DOWNLOAD_MODEL"
         private const val ACTION_PAUSE = "com.amresalehin.emregallery.indexing.PAUSE"
         private const val ACTION_RESUME = "com.amresalehin.emregallery.indexing.RESUME"
@@ -648,8 +585,6 @@ class IndexingForegroundService : Service() {
         const val EXTRA_ENGINE_ID = "engine_id"
         const val EXTRA_RETRY_FAILED_ONLY = "retry_failed_only"
         const val EXTRA_FOLDERS = "face_indexing_folders"
-        const val EXTRA_AI_MODEL = "com.amresalehin.emregallery.indexing.EXTRA_AI_MODEL"
-        const val EXTRA_TAGGING_FOLDERS = "com.amresalehin.emregallery.indexing.EXTRA_TAGGING_FOLDERS"
 
         private fun command(context: Context, action: String, configure: Intent.() -> Unit = {}) {
             val intent = Intent(context, IndexingForegroundService::class.java).setAction(action).apply(configure)
@@ -702,20 +637,6 @@ class IndexingForegroundService : Service() {
         fun startLocation(context: Context, rescanAll: Boolean = false) =
             command(context, ACTION_START_LOCATION) {
                 putExtra(EXTRA_RESCAN_ALL, rescanAll)
-            }
-
-        fun startAiTagging(
-            context: Context,
-            rescanAll: Boolean = false,
-            modelId: String? = null,
-            folders: Set<String>? = null
-        ) =
-            command(context, ACTION_START_AI_TAGGING) {
-                putExtra(EXTRA_RESCAN_ALL, rescanAll)
-                if (modelId != null) putExtra(EXTRA_AI_MODEL, modelId)
-                if (folders != null && folders.isNotEmpty()) {
-                    putStringArrayListExtra(EXTRA_TAGGING_FOLDERS, ArrayList(folders))
-                }
             }
 
         fun downloadModel(

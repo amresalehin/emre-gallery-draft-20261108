@@ -413,41 +413,6 @@ fun ViewerDetailsDrawer(
         }
     }
 
-    var isAiTagging by remember(item.uri) { mutableStateOf(false) }
-    var aiTaggingStatus by remember(item.uri) { mutableStateOf<String?>(null) }
-
-    val handleAutoTagAi: () -> Unit = {
-        if (!isAiTagging && !item.isVideo) {
-            isAiTagging = true
-            val currentModel = com.amresalehin.emregallery.ai.tagging.AiTaggingSettings.getSelectedModel(context)
-            aiTaggingStatus = "Analyzing photo..."
-            coroutineScope.launch {
-                try {
-                    val result = withContext(Dispatchers.IO) {
-                        com.amresalehin.emregallery.ai.tagging.AiImageTagger.tagAndSave(
-                            context = context,
-                            item = item,
-                            prefs = com.amresalehin.emregallery.data.PreferencesRepository(context),
-                            preferredModel = currentModel
-                        )
-                    }
-                    if (result.isSuccess && result.tags.isNotEmpty()) {
-                        result.tags.forEach { tag -> onAddTag(tag) }
-                        aiTaggingStatus = "Tagged ${result.tags.size} items (${result.engineName})"
-                    } else if (result.isSuccess) {
-                        aiTaggingStatus = "No tags identified (${result.engineName})"
-                    } else {
-                        aiTaggingStatus = result.errorMessage ?: "Failed to generate tags (${result.engineName})"
-                    }
-                } catch (e: Exception) {
-                    aiTaggingStatus = "Error: ${e.message}"
-                } finally {
-                    isAiTagging = false
-                }
-            }
-        }
-    }
-
     val handleRemoveTag: (String) -> Unit = { tagToRemove ->
         coroutineScope.launch {
             com.amresalehin.emregallery.data.PreferencesRepository(context).removeTagForMedia(item.uri, tagToRemove)
@@ -504,9 +469,6 @@ fun ViewerDetailsDrawer(
                             onAddToAlbum = onAddTo,
                             onAddTag = { showAddTagDialog = true },
                             onEditLocation = { showAddLocationDialog = true },
-                            onAutoTagAi = handleAutoTagAi,
-                            isAiTagging = isAiTagging,
-                            aiTaggingStatus = aiTaggingStatus,
                             onRemoveTag = handleRemoveTag,
                             listState = overviewListState,
                             faceUiState = faceUiState,
@@ -596,9 +558,6 @@ fun ViewerDetailsDrawer(
                             detailsState = detailsState,
                             onRenameFaceClick = { renamingFace = it },
                             onRescanPhoto = { startScan(false) },
-                            onAutoTagAi = handleAutoTagAi,
-                            isAiTagging = isAiTagging,
-                            aiTaggingStatus = aiTaggingStatus,
                             onAddTagClick = { showAddTagDialog = true },
                             onRemoveTag = handleRemoveTag,
                             listState = actionsListState

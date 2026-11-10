@@ -7,7 +7,6 @@ plugins {
 android {
     namespace = "com.amresalehin.emregallery"
     compileSdk = 35
-    ndkVersion = "27.0.12077973"
 
     defaultConfig {
         applicationId = "com.aistudio.emregallery.xytkpq"
@@ -19,29 +18,21 @@ android {
         ndk {
             abiFilters += listOf("arm64-v8a", "x86_64")
         }
-        externalNativeBuild {
-            cmake {
-                arguments += listOf(
-                    "-DCMAKE_BUILD_TYPE=Release",
-                    "-DBUILD_SHARED_LIBS=ON",
-                    "-DLLAMA_BUILD_COMMON=OFF",
-                    "-DLLAMA_BUILD_TOOLS=OFF",
-                    "-DLLAMA_BUILD_TESTS=OFF",
-                    "-DLLAMA_BUILD_EXAMPLES=OFF",
-                    "-DLLAMA_BUILD_SERVER=OFF",
-                    "-DLLAMA_OPENSSL=OFF",
-                    "-DGGML_OPENMP=OFF",
-                    "-DGGML_NATIVE=OFF",
-                    "-DGGML_LLAMAFILE=OFF"
-                )
-            }
-        }
         resourceConfigurations += listOf("en")
+    }
+
+    signingConfigs {
+        create("debugConfig") {
+            storeFile = file("${rootDir}/debug.keystore")
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
+        }
     }
 
     buildTypes {
         debug {
-            // Debug build configuration
+            signingConfig = signingConfigs.getByName("debugConfig")
         }
         release {
             isMinifyEnabled = true
@@ -76,13 +67,6 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
     buildFeatures { compose = true }
-
-    externalNativeBuild {
-        cmake {
-            path = file("src/main/cpp/CMakeLists.txt")
-            version = "3.22.1"
-        }
-    }
 }
 
 dependencies {
@@ -111,8 +95,6 @@ dependencies {
     implementation("androidx.exifinterface:exifinterface:1.3.7")
     // On-device InsightFace buffalo_l SCRFD detector and ArcFace inference.
     implementation("com.microsoft.onnxruntime:onnxruntime-android:1.20.0")
-    // Google LiteRT-LM for genuine Gemma 4 multimodal inference.
-    implementation("com.google.ai.edge.litertlm:litertlm-android:0.16.1")
     // Native Tesseract engine and its JNI libraries are packaged in the APK.
     implementation("cz.adaptech.tesseract4android:tesseract4android:4.9.0")
     // On-device Google ML Kit Text Recognition with multiple language script support
