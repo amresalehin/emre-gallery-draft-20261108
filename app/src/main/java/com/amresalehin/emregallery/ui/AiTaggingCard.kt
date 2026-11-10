@@ -31,8 +31,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.amresalehin.emregallery.ai.local.Gemma4RuntimeAdapter
-import com.amresalehin.emregallery.ai.local.MiniCpmV46RuntimeAdapter
+import com.amresalehin.emregallery.ai.local.LocalModelDeviceCompatibility
 import com.amresalehin.emregallery.ai.tagging.AiTaggingSettings
 import com.amresalehin.emregallery.data.LocalModelManager
 import com.amresalehin.emregallery.data.LocalModelStatus
@@ -44,8 +43,12 @@ import kotlin.math.roundToInt
 data class TaggingModelOption(
     val id: String,
     val displayName: String,
-    val isLocalAiModel: Boolean = true
-)
+    val isLocalAiModel: Boolean = true,
+    val compatibilityMessage: String? = null
+) {
+    val isDeviceCompatible: Boolean
+        get() = compatibilityMessage == null
+}
 
 @Composable
 fun AiTaggingCard(
@@ -102,12 +105,21 @@ fun AiTaggingCard(
         AiTaggingSettings.setSelectedModel(context, AiTaggingSettings.MODEL_MINI_CPM_V46)
     }
 
-    // Only offer local models that implement actual image-to-text inference.
-    val availableModels = remember(activeCloudProvider, cloudProviders) {
-        val models = mutableListOf(
-            TaggingModelOption(AiTaggingSettings.MODEL_MINI_CPM_V46, "MiniCPM-V 4.6 (1.3B)", isLocalAiModel = true),
-            TaggingModelOption(AiTaggingSettings.MODEL_GEMMA_4, "Gemma 4 E2B", isLocalAiModel = true)
-        )
+    // Expose every implemented local vision runtime. Device-class-incompatible models remain
+    // visible in the selector but are disabled instead of disappearing or disabling Local AI.
+    val availableModels = remember(context, activeCloudProvider, cloudProviders) {
+        val models = LocalModelManager.SUPPORTED_MODELS
+            .filter { it.hasRuntimeAdapter }
+            .map { model ->
+                TaggingModelOption(
+                    id = model.id,
+                    displayName = model.displayName,
+                    isLocalAiModel = true,
+                    compatibilityMessage = LocalModelDeviceCompatibility.incompatibilityMessage(context, model.id)
+                )
+            }
+            .toMutableList()
+
         cloudProviders.forEach { provider ->
             val label = if (provider.modelId.isNotBlank()) {
                 "${provider.name} (${provider.modelId})"
@@ -124,17 +136,24 @@ fun AiTaggingCard(
         models
     }
 
-    // Selected model state inspection
-    val isCloud = selectedModelId == AiTaggingSettings.MODEL_CLOUD ||
-            selectedModelId.startsWith("cloud") ||
-            cloudProviders.any { it.id == selectedModelId }
-    val currentModelState = allModelStates[selectedModelId] ?: LocalModelManager.getModelState(selectedModelId)
-
-    val selectedModelMemoryError = when (selectedModelId) {
-        AiTaggingSettings.MODEL_MINI_CPM_V46 -> MiniCpmV46RuntimeAdapter.deviceClassRequirementMessage(context)
-        AiTaggingSettings.MODEL_GEMMA_4 -> Gemma4RuntimeAdapter.deviceClassRequirementMessage(context)
-        else -> null
+    // Do not leave a legacy saved selection pointing at a model that this device cannot run.
+    // Select the first compatible local runtime while keeping incompatible options visible.
+    LaunchedEffect(selectedModelId, availableModels) {
+        val selectedOption = availableModels.firstOrNull { it.id == selectedModelId }
+        if (selectedOption?.isLocalAiModel == true && !selectedOption.isDeviceCompatible) {
+            availableModels.firstOrNull { it.isLocalAiModel && it.isDeviceCompatible }?.let { fallback ->
+                selectedModelId = fallback.id
+                AiTaggingSettings.setSelectedModel(context, fallback.id)
+                onShowSnackbar?.invoke("${selectedOption.displayName} is not compatible with this device. Switched to ${fallback.displayName}.")
+            }
+        }
     }
+
+    // Device-class check only. Runtime adapters perform their own live free-memory checks
+    // immediately before model initialization.
+    val selectedModelMemoryError = availableModels
+        .firstOrNull { it.id == selectedModelId }
+        ?.compatibilityMessage
 
     val isModelInstalled = when {
         isCloud -> true
@@ -489,6 +508,7 @@ fun AiTaggingCard(
                             ModelPill(
                                 label = model.displayName,
                                 isSelected = isSelected,
+                                enabled = model.isDeviceCompatible,
                                 onClick = {
                                     selectedModelId = model.id
                                     AiTaggingSettings.setSelectedModel(context, model.id)
@@ -629,7 +649,7 @@ fun AiTaggingCard(
                                 triggerTagging(false)
                                 onShowSnackbar?.invoke("Started AI tagging for untagged photos")
                             },
-                            enabled = !isRunning && !isModelDownloading,
+                            enabled = !isRunning && !isModelDownloading && selectedModelMemoryError == null,
                             shape = RoundedCornerShape(16.dp),
                             modifier = Modifier
                                 .weight(1f)
@@ -675,19 +695,29 @@ private fun ModelPill(
     label: String,
     isSelected: Boolean,
     onClick: () -> Unit,
-    testTag: String
+    testTag: String,
+    enabled: Boolean = true
 ) {
+    val disabledColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.38f)
     Surface(
         shape = RoundedCornerShape(18.dp),
-        color = if (isSelected) Color(0xFF161A20) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
+        color = when {
+            !enabled -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.22f)
+            isSelected -> Color(0xFF161A20)
+            else -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)
+        },
         border = BorderStroke(
             1.dp,
-            if (isSelected) Color(0xFF161A20) else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f)
+            when {
+                !enabled -> MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.18f)
+                isSelected -> Color(0xFF161A20)
+                else -> MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f)
+            }
         ),
         modifier = Modifier
             .height(38.dp)
             .defaultMinSize(minWidth = 76.dp)
-            .clickable(onClick = onClick)
+            .clickable(enabled = enabled, onClick = onClick)
             .testTag(testTag)
     ) {
         Box(
@@ -698,8 +728,12 @@ private fun ModelPill(
                 text = label,
                 style = MaterialTheme.typography.bodySmall.copy(
                     fontSize = 13.sp,
-                    fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
-                    color = if (isSelected) Color.White else MaterialTheme.colorScheme.onSurface
+                    fontWeight = if (isSelected && enabled) FontWeight.SemiBold else FontWeight.Normal,
+                    color = when {
+                        !enabled -> disabledColor
+                        isSelected -> Color.White
+                        else -> MaterialTheme.colorScheme.onSurface
+                    }
                 ),
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
