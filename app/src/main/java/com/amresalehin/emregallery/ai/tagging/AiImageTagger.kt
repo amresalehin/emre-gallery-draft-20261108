@@ -35,6 +35,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.io.ByteArrayOutputStream
 import java.io.InputStream
+import java.io.IOException
 import java.util.concurrent.TimeUnit
 import kotlin.math.abs
 import kotlin.math.max
@@ -265,15 +266,21 @@ object AiImageTagger {
         provider: CloudAiProvider,
         modelOverride: String? = null
     ): List<String> = withContext(Dispatchers.IO) {
-        val bitmap = loadSampledBitmap(context, Uri.parse(item.uri), maxDimension = 512)
-            ?: return@withContext emptyList()
+        val bitmap = loadSampledBitmap(context, Uri.parse(item.uri), maxDimension = 768)
+            ?: throw IOException("Could not decode the selected image. Check that the media file is still accessible.")
 
-        val outputStream = ByteArrayOutputStream()
-        bitmap.compress(Bitmap.CompressFormat.JPEG, 80, outputStream)
-        val imageBytes = outputStream.toByteArray()
-        bitmap.recycle()
+        val imageBytes = try {
+            ByteArrayOutputStream().use { output ->
+                if (!bitmap.compress(Bitmap.CompressFormat.JPEG, 82, output)) {
+                    throw IOException("Could not encode the selected image for Cloud AI.")
+                }
+                output.toByteArray()
+            }
+        } finally {
+            bitmap.recycle()
+        }
 
-        return@withContext tagWithCloudVisionDirect(provider, imageBytes, modelOverride)
+        tagWithCloudVisionDirect(provider, imageBytes, modelOverride)
     }
 
     /**
