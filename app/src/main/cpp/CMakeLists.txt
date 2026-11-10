@@ -14,6 +14,15 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(llama_cpp)
 
+# llama.cpp's mtmd library is intentionally not included when its full tools
+# build is disabled. Add only the multimodal library needed by this app.
+if(NOT TARGET mtmd)
+    add_subdirectory(
+        "${llama_cpp_SOURCE_DIR}/tools/mtmd"
+        "${CMAKE_CURRENT_BINARY_DIR}/llama-mtmd"
+    )
+endif()
+
 find_library(log-lib log)
 find_library(android-lib android)
 
