@@ -3,8 +3,8 @@ package com.amresalehin.emregallery.ai.local
 import android.content.Context
 import android.os.StatFs
 import android.util.Log
-import com.amresalehin.emregallery.data.FlorenceModelState
-import com.amresalehin.emregallery.data.FlorenceStatus
+import com.amresalehin.emregallery.data.LocalModelState
+import com.amresalehin.emregallery.data.LocalModelStatus
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -16,7 +16,7 @@ import java.security.MessageDigest
 
 /**
  * Robust installer and integrity validator for on-device AI models.
- * Enforces pre-flight storage verification, staging isolation, cryptographic SHA-256 validation,
+ * Enforces pre-flight storage verification, staging isolation, pinned SHA-256/MD5 validation,
  * atomic directory promotion, automatic rollback on runtime failure, and versioned manifest tracking.
  */
 object LocalModelInstaller {
@@ -78,20 +78,20 @@ object LocalModelInstaller {
      * Checks whether the model is completely installed, cryptographic hashes match,
      * manifest metadata matches current registry revision, and runtime status is valid.
      */
-    fun checkInstallationStatus(filesDir: File, spec: LocalModelSpec): FlorenceModelState {
+    fun checkInstallationStatus(filesDir: File, spec: LocalModelSpec): LocalModelState {
         val modelDir = getModelDir(filesDir, spec)
         if (!modelDir.exists() || !modelDir.isDirectory) {
-            return FlorenceModelState(status = FlorenceStatus.NOT_INSTALLED, totalBytes = spec.totalExpectedBytes)
+            return LocalModelState(status = LocalModelStatus.NOT_INSTALLED, totalBytes = spec.totalExpectedBytes)
         }
 
         val manifestFile = File(modelDir, spec.manifestFileName)
         if (!manifestFile.isFile || manifestFile.length() == 0L) {
-            return FlorenceModelState(status = FlorenceStatus.NOT_INSTALLED, totalBytes = spec.totalExpectedBytes)
+            return LocalModelState(status = LocalModelStatus.NOT_INSTALLED, totalBytes = spec.totalExpectedBytes)
         }
 
         val manifestJson = runCatching { JSONObject(manifestFile.readText()) }.getOrNull()
-            ?: return FlorenceModelState(
-                status = FlorenceStatus.ERROR,
+            ?: return LocalModelState(
+                status = LocalModelStatus.ERROR,
                 errorMessage = "Corrupt manifest file in ${spec.displayName} directory."
             )
 
@@ -101,8 +101,8 @@ object LocalModelInstaller {
             manifestId != spec.canonicalId &&
             !spec.legacyAliases.contains(manifestId)
         ) {
-            return FlorenceModelState(
-                status = FlorenceStatus.ERROR,
+            return LocalModelState(
+                status = LocalModelStatus.ERROR,
                 errorMessage = "Manifest model id mismatch: expected " + spec.id + ", got " + manifestId
             )
         }
@@ -111,14 +111,14 @@ object LocalModelInstaller {
         val manifestRepo = manifestJson.optString("upstreamRepo")
         val manifestRev = manifestJson.optString("upstreamRevision")
         if (manifestRepo.isNotEmpty() && manifestRepo != spec.upstreamRepo) {
-            return FlorenceModelState(
-                status = FlorenceStatus.ERROR,
+            return LocalModelState(
+                status = LocalModelStatus.ERROR,
                 errorMessage = "Manifest repository mismatch: expected ${spec.upstreamRepo}, got $manifestRepo"
             )
         }
         if (manifestRev.isNotEmpty() && manifestRev != spec.upstreamRevision) {
-            return FlorenceModelState(
-                status = FlorenceStatus.ERROR,
+            return LocalModelState(
+                status = LocalModelStatus.ERROR,
                 errorMessage = "Manifest revision mismatch: expected ${spec.upstreamRevision}, got $manifestRev"
             )
         }
@@ -129,8 +129,8 @@ object LocalModelInstaller {
             val file = File(modelDir, artifact.relativePath)
             if (!file.isFile) {
                 if (artifact.isRequired) {
-                    return FlorenceModelState(
-                        status = FlorenceStatus.NOT_INSTALLED,
+                    return LocalModelState(
+                        status = LocalModelStatus.NOT_INSTALLED,
                         errorMessage = "Missing artifact " + artifact.relativePath
                     )
                 }
@@ -138,22 +138,22 @@ object LocalModelInstaller {
             }
             val len = file.length()
             if (len == 0L || len < artifact.expectedMinBytes) {
-                return FlorenceModelState(
-                    status = FlorenceStatus.ERROR,
+                return LocalModelState(
+                    status = LocalModelStatus.ERROR,
                     errorMessage = "Artifact " + artifact.relativePath + " is truncated (" + len + " bytes)"
                 )
             }
             if (artifact.exactBytes != null && len != artifact.exactBytes) {
-                return FlorenceModelState(
-                    status = FlorenceStatus.ERROR,
+                return LocalModelState(
+                    status = LocalModelStatus.ERROR,
                     errorMessage = "Artifact " + artifact.relativePath + " size mismatch: expected " + artifact.exactBytes + ", got " + len
                 )
             }
             if (!artifact.sha256Hex.isNullOrBlank()) {
                 val actualHash = runCatching { computeSha256(file) }.getOrNull()
                 if (actualHash == null || !actualHash.equals(artifact.sha256Hex, ignoreCase = true)) {
-                    return FlorenceModelState(
-                        status = FlorenceStatus.ERROR,
+                    return LocalModelState(
+                        status = LocalModelStatus.ERROR,
                         errorMessage = "Artifact " + artifact.relativePath + " failed SHA-256 validation."
                     )
                 }
@@ -161,8 +161,8 @@ object LocalModelInstaller {
             if (!artifact.md5Hex.isNullOrBlank()) {
                 val actualHash = runCatching { computeMd5(file) }.getOrNull()
                 if (actualHash == null || !actualHash.equals(artifact.md5Hex, ignoreCase = true)) {
-                    return FlorenceModelState(
-                        status = FlorenceStatus.ERROR,
+                    return LocalModelState(
+                        status = LocalModelStatus.ERROR,
                         errorMessage = "Artifact " + artifact.relativePath + " failed MD5 validation."
                     )
                 }
@@ -175,12 +175,12 @@ object LocalModelInstaller {
         val isAssetsOnly = manifestStatus == "ASSETS_DOWNLOADED_RUNTIME_UNAVAILABLE" || !spec.hasRuntimeAdapter
 
         val status = when {
-            isReady && spec.hasRuntimeAdapter -> FlorenceStatus.READY
-            isAssetsOnly -> FlorenceStatus.ASSETS_DOWNLOADED_RUNTIME_UNAVAILABLE
-            else -> FlorenceStatus.NOT_INSTALLED
+            isReady && spec.hasRuntimeAdapter -> LocalModelStatus.READY
+            isAssetsOnly -> LocalModelStatus.ASSETS_DOWNLOADED_RUNTIME_UNAVAILABLE
+            else -> LocalModelStatus.NOT_INSTALLED
         }
 
-        return FlorenceModelState(
+        return LocalModelState(
             status = status,
             progress = 1.0f,
             bytesDownloaded = totalInstalledBytes,
@@ -194,19 +194,19 @@ object LocalModelInstaller {
         )
     }
 
-    fun checkInstallationStatus(context: Context, spec: LocalModelSpec): FlorenceModelState {
+    fun checkInstallationStatus(context: Context, spec: LocalModelSpec): LocalModelState {
         return checkInstallationStatus(context.filesDir, spec)
     }
 
     fun isInstalled(filesDir: File, spec: LocalModelSpec): Boolean {
         val state = checkInstallationStatus(filesDir, spec)
-        return state.status == FlorenceStatus.READY || state.status == FlorenceStatus.INSTALLED
+        return state.status == LocalModelStatus.READY || state.status == LocalModelStatus.INSTALLED
     }
 
     fun isInstalled(context: Context, spec: LocalModelSpec): Boolean {
         val state = checkInstallationStatus(context, spec)
         // Ready models are installed and usable
-        return state.status == FlorenceStatus.READY || state.status == FlorenceStatus.INSTALLED
+        return state.status == LocalModelStatus.READY || state.status == LocalModelStatus.INSTALLED
     }
 
     /**
@@ -239,7 +239,7 @@ object LocalModelInstaller {
         context: Context,
         spec: LocalModelSpec,
         onProgress: (ModelDownloadProgress) -> Unit
-    ): FlorenceModelState = withContext(Dispatchers.IO) {
+    ): LocalModelState = withContext(Dispatchers.IO) {
         val modelDir = getModelDir(context, spec)
         val stagingDir = getStagingDir(context, spec)
         val backupDir = getBackupDir(context, spec)
@@ -283,7 +283,9 @@ object LocalModelInstaller {
                 staged.length() >= artifact.expectedMinBytes &&
                 (artifact.exactBytes == null || staged.length() == artifact.exactBytes) &&
                 (artifact.sha256Hex.isNullOrBlank() ||
-                    runCatching { computeSha256(staged).equals(artifact.sha256Hex, ignoreCase = true) }.getOrDefault(false))
+                    runCatching { computeSha256(staged).equals(artifact.sha256Hex, ignoreCase = true) }.getOrDefault(false)) &&
+                (artifact.md5Hex.isNullOrBlank() ||
+                    runCatching { computeMd5(staged).equals(artifact.md5Hex, ignoreCase = true) }.getOrDefault(false))
             if (valid) continue
             if (staged.isFile && staged.length() >= expected) {
                 staged.delete()
@@ -317,7 +319,9 @@ object LocalModelInstaller {
                     stagingFile.length() >= artifact.expectedMinBytes &&
                     (artifact.exactBytes == null || stagingFile.length() == artifact.exactBytes) &&
                     (artifact.sha256Hex.isNullOrBlank() ||
-                        runCatching { computeSha256(stagingFile).equals(artifact.sha256Hex, ignoreCase = true) }.getOrDefault(false))
+                        runCatching { computeSha256(stagingFile).equals(artifact.sha256Hex, ignoreCase = true) }.getOrDefault(false)) &&
+                    (artifact.md5Hex.isNullOrBlank() ||
+                        runCatching { computeMd5(stagingFile).equals(artifact.md5Hex, ignoreCase = true) }.getOrDefault(false))
                 ) {
                     totalBytesDownloaded += stagingFile.length()
                     onProgress(
@@ -540,8 +544,8 @@ object LocalModelInstaller {
             }
             if (backupDir.exists()) backupDir.deleteRecursively()
 
-            val finalStatus = if (spec.hasRuntimeAdapter) FlorenceStatus.READY else FlorenceStatus.ASSETS_DOWNLOADED_RUNTIME_UNAVAILABLE
-            return@withContext FlorenceModelState(
+            val finalStatus = if (spec.hasRuntimeAdapter) LocalModelStatus.READY else LocalModelStatus.ASSETS_DOWNLOADED_RUNTIME_UNAVAILABLE
+            return@withContext LocalModelState(
                 status = finalStatus,
                 progress = 1.0f,
                 bytesDownloaded = totalBytesExpected,
