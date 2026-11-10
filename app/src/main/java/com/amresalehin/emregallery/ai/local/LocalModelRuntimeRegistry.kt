@@ -29,6 +29,12 @@ object LocalModelRuntimeRegistry {
             override fun createRuntime(spec: LocalModelSpec): LocalModelRuntime =
                 Lfm25VlRuntimeAdapter(spec)
         })
+        register(object : LocalModelRuntimeFactory {
+            override fun isApplicable(spec: LocalModelSpec): Boolean =
+                spec.architecture == ModelArchitecture.QWEN3_5
+            override fun createRuntime(spec: LocalModelSpec): LocalModelRuntime =
+                Qwen35RuntimeAdapter(spec)
+        })
     }
 
     @Synchronized
