@@ -93,7 +93,7 @@ fun AiTaggingCard(
 
     // Sync installed states on mount
     LaunchedEffect(Unit) {
-        FlorenceModelManager.refreshAllStates(context)
+        LocalModelManager.refreshAllStates(context)
     }
 
     // Legacy smart_vision and Florence selections now migrate to MiniCPM-V 4.6.
@@ -128,14 +128,14 @@ fun AiTaggingCard(
     val isCloud = selectedModelId == AiTaggingSettings.MODEL_CLOUD ||
             selectedModelId.startsWith("cloud") ||
             cloudProviders.any { it.id == selectedModelId }
-    val currentModelState = allModelStates[selectedModelId] ?: FlorenceModelManager.getModelState(selectedModelId)
+    val currentModelState = allModelStates[selectedModelId] ?: LocalModelManager.getModelState(selectedModelId)
 
     val isModelInstalled = when {
         isCloud -> true
-        else -> FlorenceModelManager.isInstalled(context, selectedModelId) || currentModelState.status.isUsable
+        else -> LocalModelManager.isInstalled(context, selectedModelId) || currentModelState.status.isUsable
     }
 
-    val isModelDownloading = !isCloud && currentModelState.status == FlorenceStatus.DOWNLOADING
+    val isModelDownloading = !isCloud && currentModelState.status == LocalModelStatus.DOWNLOADING
     val modelDownloadPercent = (currentModelState.progress * 100f).roundToInt().coerceIn(0, 100)
 
     val isRunning = taggingState.isRunning && !taggingState.isPaused
@@ -241,7 +241,7 @@ fun AiTaggingCard(
                         onClick = {
                             when {
                                 isModelDownloading -> {
-                                    FlorenceModelManager.cancelDownload(context, selectedModelId)
+                                    LocalModelManager.cancelDownload(context, selectedModelId)
                                     onShowSnackbar?.invoke("Download cancelled")
                                 }
                                 !isModelInstalled -> {
@@ -251,11 +251,11 @@ fun AiTaggingCard(
                                             onShowSnackbar?.invoke(selectedModelMemoryError)
                                         } else {
                                             onShowSnackbar?.invoke("Downloading $modelName model...")
-                                            val ok = FlorenceModelManager.downloadAndInstallModel(context, selectedModelId)
+                                            val ok = LocalModelManager.downloadAndInstallModel(context, selectedModelId)
                                             if (ok) {
                                                 onShowSnackbar?.invoke("$modelName model ready")
                                             } else {
-                                                val state = FlorenceModelManager.getModelState(selectedModelId)
+                                                val state = LocalModelManager.getModelState(selectedModelId)
                                                 onShowSnackbar?.invoke(state.errorMessage ?: "Download failed")
                                             }
                                         }
