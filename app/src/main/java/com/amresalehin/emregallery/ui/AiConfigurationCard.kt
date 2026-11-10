@@ -19,6 +19,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.luminance
@@ -32,6 +33,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
+import com.amresalehin.emregallery.ai.local.LocalModelDeviceCompatibility
 import com.amresalehin.emregallery.ai.tagging.AiTaggingSettings
 import com.amresalehin.emregallery.data.CloudAiProvider
 import com.amresalehin.emregallery.data.CloudProviderStatus
@@ -546,6 +548,8 @@ fun AiConfigurationCard(
                         ) {
                             LocalModelManager.SUPPORTED_MODELS.forEach { model ->
                                 val modelState = allModelStates[model.id] ?: LocalModelState()
+                                val compatibilityMessage = LocalModelDeviceCompatibility.incompatibilityMessage(context, model.id)
+                                val isDeviceCompatible = compatibilityMessage == null
 
                                 Surface(
                                     shape = RoundedCornerShape(20.dp),
@@ -554,7 +558,9 @@ fun AiConfigurationCard(
                                         1.dp,
                                         if (isDark) MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f) else Color.White.copy(alpha = 0.85f)
                                     ),
-                                    modifier = Modifier.fillMaxWidth()
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .alpha(if (isDeviceCompatible) 1f else 0.42f)
                                 ) {
                                     Column(
                                         modifier = Modifier
@@ -581,9 +587,14 @@ fun AiConfigurationCard(
                                                 state = modelState,
                                                 testTagPrefix = model.testTagPrefix,
                                                 isDark = isDark,
+                                                deviceCompatible = isDeviceCompatible,
                                                 onInstall = {
-                                                    scope.launch {
-                                                        LocalModelManager.downloadAndInstallModel(context, model.id)
+                                                    if (!isDeviceCompatible) {
+                                                        onShowSnackbar?.invoke(compatibilityMessage ?: "This model is not compatible with this device.")
+                                                    } else {
+                                                        scope.launch {
+                                                            LocalModelManager.downloadAndInstallModel(context, model.id)
+                                                        }
                                                     }
                                                 },
                                                 onCancel = {
@@ -592,6 +603,17 @@ fun AiConfigurationCard(
                                                 onDetails = {
                                                     selectedModelForDetails = model
                                                 }
+                                            )
+                                        }
+
+                                        if (compatibilityMessage != null) {
+                                            Spacer(Modifier.height(6.dp))
+                                            Text(
+                                                text = compatibilityMessage,
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                maxLines = 2,
+                                                overflow = TextOverflow.Ellipsis
                                             )
                                         }
 
@@ -965,6 +987,7 @@ private fun AiSegmentOption(
                 )
             )
         }
+        }
     }
 }
 
@@ -1182,11 +1205,38 @@ private fun DynamicLocalModelStatusButton(
     state: LocalModelState,
     isDark: Boolean,
     testTagPrefix: String = "local_model",
+    deviceCompatible: Boolean = true,
     onInstall: () -> Unit,
     onCancel: () -> Unit,
     onDetails: () -> Unit
 ) {
-    when (state.status) {
+    when {
+        !deviceCompatible && (state.status == LocalModelStatus.NOT_INSTALLED || state.status == LocalModelStatus.ERROR) -> {
+            Surface(
+                onClick = onDetails,
+                shape = CircleShape,
+                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.22f)),
+                modifier = Modifier
+                    .height(34.dp)
+                    .testTag("${testTagPrefix}_incompatible_button")
+            ) {
+                Box(
+                    contentAlignment = Alignment.Center,
+                    modifier = Modifier.padding(horizontal = 12.dp)
+                ) {
+                    Text(
+                        text = "Incompatible",
+                        style = MaterialTheme.typography.labelSmall.copy(
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.55f)
+                        )
+                    )
+                }
+            }
+        }
+        else -> when (state.status) {
         LocalModelStatus.NOT_INSTALLED -> {
             Surface(
                 onClick = onInstall,
