@@ -34,16 +34,13 @@ class Qwen35RuntimeAdapter(
         /** Unsloth's published estimate for 4-bit Qwen3.5-0.8B is about 3.5 GB total memory. */
         fun memoryRequirementMessage(context: Context): String? {
             val manager = context.getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager
-                ?: return "Unable to verify device memory for Qwen3.5-0.8B."
+                ?: return "Unable to verify available memory for Qwen3.5-0.8B."
             val info = ActivityManager.MemoryInfo()
             manager.getMemoryInfo(info)
-            return when {
-                info.totalMem < MIN_DEVICE_RAM_BYTES ->
-                    "Qwen3.5-0.8B UD-Q4_K_XL is intended for a device with at least 3.5 GB RAM. This device is below the minimum memory class."
-                info.availMem < MIN_AVAILABLE_RAM_BYTES ->
+            return deviceClassRequirementMessage(info.totalMem)
+                ?: if (info.availMem < MIN_AVAILABLE_RAM_BYTES) {
                     "Qwen3.5-0.8B needs about 1 GB of currently available memory to load safely. Close other apps and retry."
-                else -> null
-            }
+                } else null
         }
 
         /** Device-class check separated from transient free-memory pressure for UI availability. */
