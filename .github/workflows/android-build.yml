@@ -48,11 +48,10 @@ jobs:
           python --version
           python3.10 --version
 
-      - name: Set up Android SDK and native toolchains
-        uses: android-actions/setup-android@v3
-
-      - name: Install NDK and CMake
-        run: sdkmanager --install "ndk;27.0.12077973" "cmake;3.22.1"
+      - name: Install Android NDK and CMake
+        run: |
+          echo "Android SDK: ${ANDROID_HOME:-$ANDROID_SDK_ROOT}"
+          sdkmanager --install "ndk;27.0.12077973" "cmake;3.22.1"
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v6
