@@ -1,8 +1,8 @@
 package com.amresalehin.emregallery.ai.local
 
 import android.content.Context
-import com.amresalehin.emregallery.data.FlorenceModelState
-import com.amresalehin.emregallery.data.FlorenceStatus
+import com.amresalehin.emregallery.data.LocalModelState
+import com.amresalehin.emregallery.data.LocalModelStatus
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.Dispatchers
@@ -21,11 +21,11 @@ import java.util.concurrent.ConcurrentHashMap
  */
 object LocalModelStateStore {
 
-    private val _allModelStates = MutableStateFlow<Map<String, FlorenceModelState>>(emptyMap())
-    val allModelStates: StateFlow<Map<String, FlorenceModelState>> = _allModelStates.asStateFlow()
+    private val _allModelStates = MutableStateFlow<Map<String, LocalModelState>>(emptyMap())
+    val allModelStates: StateFlow<Map<String, LocalModelState>> = _allModelStates.asStateFlow()
 
-    private val _florenceState = MutableStateFlow(FlorenceModelState())
-    val florenceState: StateFlow<FlorenceModelState> = _florenceState.asStateFlow()
+    private val _modelState = MutableStateFlow(LocalModelState())
+    val modelState: StateFlow<LocalModelState> = _modelState.asStateFlow()
 
     private val activeJobs = ConcurrentHashMap<String, Job>()
     private val modelLocks = ConcurrentHashMap<String, Mutex>()
@@ -33,8 +33,8 @@ object LocalModelStateStore {
     private fun getLock(modelId: String): Mutex =
         modelLocks.computeIfAbsent(modelId) { Mutex() }
 
-    fun refreshAll(context: Context): Map<String, FlorenceModelState> {
-        val updated = mutableMapOf<String, FlorenceModelState>()
+    fun refreshAll(context: Context): Map<String, LocalModelState> {
+        val updated = mutableMapOf<String, LocalModelState>()
         for (spec in LocalModelRegistry.ALL_MODELS) {
             val currentJob = activeJobs[spec.id]
             // If actively downloading in background, don't overwrite with static check
@@ -54,15 +54,15 @@ object LocalModelStateStore {
             }
         }
         _allModelStates.value = updated
-        updated[LocalModelRegistry.FLORENCE_2_BASE_ID]?.let { _florenceState.value = it }
+        updated[LocalModelRegistry.MINI_CPM_V46_ID]?.let { _modelState.value = it }
         return updated
     }
 
-    fun getState(modelId: String): FlorenceModelState {
-        return _allModelStates.value[modelId] ?: FlorenceModelState()
+    fun getState(modelId: String): LocalModelState {
+        return _allModelStates.value[modelId] ?: LocalModelState()
     }
 
-    fun updateState(modelId: String, state: FlorenceModelState) {
+    fun updateState(modelId: String, state: LocalModelState) {
         val map = _allModelStates.value.toMutableMap()
         map[modelId] = state
         val spec = LocalModelRegistry.findSpec(modelId)
@@ -73,8 +73,8 @@ object LocalModelStateStore {
         }
         _allModelStates.value = map
 
-        if (spec?.id == LocalModelRegistry.FLORENCE_2_BASE_ID || modelId == "florence2") {
-            _florenceState.value = state
+        if (spec?.id == LocalModelRegistry.MINI_CPM_V46_ID || modelId == "minicpm_v_4_6") {
+            _modelState.value = state
         }
     }
 
@@ -99,8 +99,8 @@ object LocalModelStateStore {
 
         updateState(
             spec.id,
-            FlorenceModelState(
-                status = FlorenceStatus.QUEUED,
+            LocalModelState(
+                status = LocalModelStatus.QUEUED,
                 totalBytes = spec.totalExpectedBytes,
                 currentStage = "queued",
                 lastUpdated = System.currentTimeMillis()
@@ -113,11 +113,11 @@ object LocalModelStateStore {
                 spec = spec,
                 onProgress = { p ->
                     val status = when (p.stage) {
-                        "verifying" -> FlorenceStatus.VERIFYING
-                        "validating_runtime" -> FlorenceStatus.LOADING
-                        else -> FlorenceStatus.DOWNLOADING
+                        "verifying" -> LocalModelStatus.VERIFYING
+                        "validating_runtime" -> LocalModelStatus.LOADING
+                        else -> LocalModelStatus.DOWNLOADING
                     }
-                    val currentUpdate = FlorenceModelState(
+                    val currentUpdate = LocalModelState(
                         status = status,
                         progress = p.fraction,
                         bytesDownloaded = p.bytesDownloaded,
@@ -141,8 +141,8 @@ object LocalModelStateStore {
             refreshAll(context)
             throw e
         } catch (e: Throwable) {
-            val errState = FlorenceModelState(
-                status = FlorenceStatus.ERROR,
+            val errState = LocalModelState(
+                status = LocalModelStatus.ERROR,
                 errorMessage = e.localizedMessage ?: "Installation failed: ${e.javaClass.simpleName}",
                 lastUpdated = System.currentTimeMillis()
             )
@@ -163,8 +163,8 @@ object LocalModelStateStore {
         lock.withLock {
             LocalModelRuntimeRegistry.closeRuntime(spec.id)
             val uninstalled = LocalModelInstaller.uninstall(context, spec)
-            val resetState = FlorenceModelState(
-                status = FlorenceStatus.NOT_INSTALLED,
+            val resetState = LocalModelState(
+                status = LocalModelStatus.NOT_INSTALLED,
                 progress = 0f,
                 bytesDownloaded = 0L,
                 totalBytes = spec.totalExpectedBytes,
